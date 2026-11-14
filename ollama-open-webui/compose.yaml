@@ -1,0 +1,71 @@
+# Ollama + Open WebUI starter (Docker Compose mode).
+# Launch parameter (Brev Choice): MODEL - Ollama model tag pulled on first start.
+# Brev supplies MODEL to the first `docker compose up` only and writes no .env;
+# the value is materialized in container config, so stop/start needs no re-supply.
+#
+# Pinned images (read 2026-11-14):
+#   ollama/ollama:0.40.16 (Ollama) and ghcr.io/open-webui/open-webui:v0.13.3 (Open WebUI).
+#   Pin each by @sha256 digest from your first pull for full reproducibility.
+#   Model tags gpt-oss:20b, qwen3:14b, gemma3:12b are download sizes, not VRAM.
+#
+# GPU memory (measured 2026-11-14 at Ollama's default context):
+#   gpt-oss:20b about 16.3 GiB, gemma3:12b about 18.3 GiB - both fit a 24 GB GPU.
+#
+# Persistence: models and chats live under the workspace on the host,
+# which survives stop and is removed on delete.
+
+name: ollama-openwebui
+
+services:
+  ollama:
+    image: ollama/ollama:0.40.16
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: "0.0.0.0:11434"
+    volumes:
+      - ${HOME:-/home/ubuntu}/workspace/ollama:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  ollama-pull:
+    image: ollama/ollama:0.40.16
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: "http://ollama:11434"
+    command: ["pull", "${MODEL:-gpt-oss:20b}"]
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.13.3
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_BASE_URL: "http://ollama:11434"
+      DEFAULT_MODELS: "${MODEL:-gpt-oss:20b}"
+    volumes:
+      - ${HOME:-/home/ubuntu}/workspace/open-webui:/app/backend/data
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
