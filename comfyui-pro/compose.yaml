@@ -1,0 +1,66 @@
+# ComfyUI Pro - Docker Compose file.
+#
+# Runs one service: ComfyUI v0.45.0 with ComfyUI-Manager (comfyui_manager 4.2.2)
+# and 12 audited custom-node packs, each pinned to a full git commit
+# (docs/nodes.md), on one NVIDIA GPU.
+#
+# Image: ghcr.io/ashishsalve/comfyui-pro:0.45.0, pinned by digest
+#   sha256:3883a324527680f5028983b99581afd32fff8fa8bfdcf1dbea27b0b5480dfeef
+#   Why: the first image built from the audited Dockerfile; the digest makes the
+#   deploy byte-identical even if the tag moves. Pinned 2026-11-14; fresh-deploy
+#   smoke not yet run (see the "Last smoke" line in README.md).
+# Source: the open-source Dockerfile and scripts of this project (image build
+#   context), built and pushed by GitHub Actions. Base image
+#   pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime, pinned by digest in the
+#   Dockerfile. The image carries no model weights and no credentials.
+#
+# Port: ComfyUI listens on 8188 (web UI and HTTP API). On Brev, open it through
+#   the "Open-ComfyUI" Secure Link; from your machine use
+#   brev port-forward INSTANCE_NAME --port 8188:8188
+#
+# Persistence: everything you create is bind-mounted from the host under
+#   /home/ubuntu/workspace/comfyui-pro/ (models, input, output, user workflows
+#   and settings, Hugging Face cache, logs). It survives Stop and is destroyed
+#   by Delete. Docker creates these folders owned by root on first start.
+#
+# Launch parameters: MODEL_SET (model files downloaded on first start) and the
+#   optional HF_TOKEN. They are read when the container is created; the
+#   container keeps them across restarts and Stop/Start.
+
+services:
+  comfyui:
+    image: ghcr.io/ashishsalve/comfyui-pro:0.45.0@sha256:3883a324527680f5028983b99581afd32fff8fa8bfdcf1dbea27b0b5480dfeef
+    container_name: comfyui-pro
+    restart: unless-stopped
+    environment:
+      MODEL_SET: "${MODEL_SET:-flux1-schnell-fp8}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+    ports:
+      - "8188:8188"
+    volumes:
+      - "/home/ubuntu/workspace/comfyui-pro/models:/root/workspace/models"
+      - "/home/ubuntu/workspace/comfyui-pro/input:/root/workspace/input"
+      - "/home/ubuntu/workspace/comfyui-pro/output:/root/workspace/output"
+      - "/home/ubuntu/workspace/comfyui-pro/user:/root/workspace/user"
+      - "/home/ubuntu/workspace/comfyui-pro/cache/huggingface:/root/workspace/cache/huggingface"
+      - "/home/ubuntu/workspace/comfyui-pro/logs:/root/workspace/logs"
+    # PyTorch's Docker guidance asks for more shared memory than Docker's 64 MB default.
+    shm_size: "8gb"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "8", "http://localhost:8188/system_stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
