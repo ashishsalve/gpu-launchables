@@ -1,6 +1,6 @@
 # LlamaFactory (LlamaBoard)
 
-[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=LAUNCHABLE_ID_PENDING)
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M6suMI8RO0HIDKEq6N4wRYvu3n)
 
 No-code fine-tuning of open LLMs in the browser. [LlamaFactory](https://github.com/hiyouga/LLaMA-Factory)'s LlamaBoard web UI runs LoRA, QLoRA and full fine-tuning of 100+ open models, from dataset to exported model. Pick a base model at launch; your datasets, checkpoints and exports persist across a stop and start.
 

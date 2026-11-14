@@ -1,6 +1,6 @@
 # Open WebUI + vLLM
 
-[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=LAUNCHABLE_ID_PENDING)
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M6reXdi0sY0m18g80JNRJN0WtE)
 
 A private chat assistant on your own GPU. [vLLM](https://github.com/vllm-project/vllm) serves an open-weight model through an OpenAI-compatible API, and [Open WebUI](https://github.com/open-webui/open-webui) gives you the browser chat interface, started together with Docker Compose. Nothing you type leaves the instance.
 
