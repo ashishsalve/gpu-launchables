@@ -1,6 +1,6 @@
 # Ollama + Open WebUI starter
 
-[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=LAUNCHABLE_ID_PENDING)
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M6T0t4dhogSr5ruwzfHUvkBAVN)
 
 A private, self-hosted chat assistant on your own GPU. This environment runs [Ollama](https://github.com/ollama/ollama) to serve open-weight language models and [Open WebUI](https://github.com/open-webui/open-webui) as the browser chat interface, started together with Docker Compose. On first start it downloads the model you choose, so the chat is ready to use as soon as the download finishes.
 
