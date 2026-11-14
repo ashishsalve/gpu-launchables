@@ -1,0 +1,167 @@
+# Open Video Studio - Wan 2.2 video generation in ComfyUI with
+# ComfyUI-WanVideoWrapper, on one GPU. Brev Launchable, Docker Compose mode.
+#
+# One service, one image:
+#   comfyui - ComfyUI (port 8188) with the ComfyUI-WanVideoWrapper node pack,
+#             prebuilt SageAttention and FlashAttention wheels, and the Wan 2.2
+#             weights chosen by MODEL_SIZE. Nothing is compiled on the instance.
+#
+# Launch parameters:
+#   MODEL_SIZE (Choice 5B | 14B, default 5B) - Wan 2.2 weights downloaded on
+#     first start. 5B = TI2V-5B (text and image to video), runs on a 24 GB GPU.
+#     14B = T2V-A14B high-noise and low-noise experts (fp8) plus the 4-step
+#     LoRAs used by the ComfyUI template; choose a 48 GB GPU (L40S) or larger.
+#   HF_TOKEN (Text, optional, no default) - Hugging Face read token. The default
+#     weights are public; a token only raises Hugging Face download limits.
+#     It is passed through the service environment only, never a command.
+# Brev passes parameters to the first `docker compose up` only and writes no
+# .env. Both values are kept in the container configuration, so Stop and
+# Start need no re-entry.
+#
+# How it starts: the start script lives in the STUDIO_START environment value
+# (every shell variable escaped as $$ for Compose) and runs through
+# `eval`. First boot installs ComfyUI into the workspace, downloads the
+# weights, then starts ComfyUI. Later starts skip both steps (stamp file).
+# Literal host paths and no completion-gated depends_on, for Brev's Compose
+# ingest.
+#
+# Pins - each read from its registry or repository on 2026-11-14.
+# Brev fresh-deploy smoke: not yet run.
+#   pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime@sha256:c16f4c74... - torch
+#     2.7.1 is the newest torch with BOTH a prebuilt SageAttention 2.2.0 wheel
+#     (cu128torch2.7.1) and a prebuilt FlashAttention 2.8.3.post2 wheel
+#     (cu12torch2.7). Docker Hub tag pushed 2025-06-04; digest is the amd64
+#     manifest. CUDA 12.8 runtime.
+#   ComfyUI v0.45.0 = commit 989d93d0d968e704c589ce0146bb18c77f6b50cc - latest
+#     release, published 2026-11-10.
+#   ComfyUI-WanVideoWrapper a7439db30bed0c5b5fa437d77ae8a7bb220dfd00 - commit
+#     "version 1.4.8", 2026-11-13. Apache-2.0 at this commit.
+#   SageAttention 2.2.0 (deepbeepmeep/SageAttention release v2.2.0-linux.cg1,
+#     2026-10-08) - prebuilt Linux wheels for cu128 + torch 2.7.1, cp310-cp312.
+#     Apache-2.0. The upstream thu-ml project publishes no Linux wheels.
+#   FlashAttention 2.8.3.post2 (Dao-AILab/flash-attention release, 2026-10-13) -
+#     prebuilt wheels for cu12 + torch 2.7. BSD-3-Clause.
+#   Comfy-Org/Wan_2.2_ComfyUI_Repackaged revision
+#     ee6f4a40737a995bf5818954cfce6d59443b0f04 (2026-09-23) - Apache-2.0 model
+#     card; the same files the ComfyUI Wan 2.2 templates load.
+# Python packages from ComfyUI's and the wrapper's requirements.txt resolve at
+# first boot with torch, torchvision and torchaudio held at the image versions.
+#
+# Persistence: code, Python environment, models, outputs and caches live under
+# /home/ubuntu/workspace/open-video-studio on the host (mounted at
+# /root/workspace). They survive Stop and are destroyed by Delete.
+
+name: open-video-studio
+
+services:
+  comfyui:
+    image: pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime@sha256:c16f4c749e2d9e96878875cdf6cc45cddda1d1a36fddd371dd6f2360f1b6e2a2
+    restart: unless-stopped
+    shm_size: "8gb"
+    environment:
+      MODEL_SIZE: "${MODEL_SIZE:-5B}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/workspace/cache/huggingface"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PYTHONUNBUFFERED: "1"
+      STUDIO_START: |
+        set -euo pipefail
+        W=/root/workspace
+        C=$$W/ComfyUI
+        PY=$$W/venv/bin/python
+        mkdir -p "$$W/.state" "$$W/bin" "$$W/output" "$$W/input" "$$W/user" "$$W/cache/huggingface"
+        if [ -z "$${HF_TOKEN:-}" ]; then unset HF_TOKEN; fi
+
+        if ! dpkg -s git libgl1 libglib2.0-0 >/dev/null 2>&1; then
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends git libgl1 libglib2.0-0 ca-certificates
+          apt-get clean
+        fi
+
+        pin() {
+          if [ ! -d "$$1/.git" ]; then git clone --quiet --filter=blob:none --no-checkout "$$2" "$$1"; fi
+          git -C "$$1" cat-file -e "$$3^{commit}" 2>/dev/null || git -C "$$1" fetch --quiet origin "$$3"
+          git -C "$$1" -c advice.detachedHead=false checkout --quiet --force "$$3"
+        }
+
+        STAMP="$$W/.state/install-comfyui-989d93d-wvw-a7439db-sage220cg1-fa283post2"
+        if [ ! -f "$$STAMP" ]; then
+          pin "$$C" https://github.com/comfyanonymous/ComfyUI.git 989d93d0d968e704c589ce0146bb18c77f6b50cc
+          pin "$$C/custom_nodes/ComfyUI-WanVideoWrapper" https://github.com/kijai/ComfyUI-WanVideoWrapper.git a7439db30bed0c5b5fa437d77ae8a7bb220dfd00
+          python -m venv --system-site-packages "$$W/venv"
+          "$$PY" -c 'import torch, torchvision, torchaudio; print("torch==" + torch.__version__); print("torchvision==" + torchvision.__version__); print("torchaudio==" + torchaudio.__version__)' > "$$W/.state/constraints.txt"
+          "$$PY" -m pip install --no-cache-dir -c "$$W/.state/constraints.txt" -r "$$C/requirements.txt" -r "$$C/custom_nodes/ComfyUI-WanVideoWrapper/requirements.txt"
+          PYTAG="$$("$$PY" -c 'import sys; print("cp%d%d" % sys.version_info[:2])')"
+          ABI="$$("$$PY" -c 'import torch; print(str(torch._C._GLIBCXX_USE_CXX11_ABI).upper())')"
+          "$$PY" -m pip install --no-cache-dir -c "$$W/.state/constraints.txt" \
+            "https://github.com/deepbeepmeep/SageAttention/releases/download/v2.2.0-linux.cg1/sageattention-2.2.0%2Bcu128torch2.7.1.cg1-$${PYTAG}-$${PYTAG}-linux_x86_64.whl" \
+            "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3.post2/flash_attn-2.8.3.post2%2Bcu12torch2.7cxx11abi$${ABI}-$${PYTAG}-$${PYTAG}-linux_x86_64.whl"
+          "$$PY" -c 'import sageattention, flash_attn; print("attention-wheels-ok")'
+          touch "$$STAMP"
+          echo "install-done"
+        fi
+
+        cat > "$$W/bin/fetch-wan22.py" <<'PY'
+        import os
+        import sys
+        from huggingface_hub import hf_hub_download
+
+        REPO = "Comfy-Org/Wan_2.2_ComfyUI_Repackaged"
+        REV = "ee6f4a40737a995bf5818954cfce6d59443b0f04"
+        SETS = {
+            "5B": [
+                "split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
+                "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                "split_files/vae/wan2.2_vae.safetensors",
+            ],
+            "14B": [
+                "split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+                "split_files/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+                "split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+                "split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+                "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                "split_files/vae/wan_2.1_vae.safetensors",
+            ],
+        }
+        size = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("MODEL_SIZE", "5B")
+        if size not in SETS:
+            sys.exit("MODEL_SIZE must be 5B or 14B, got " + size)
+        root = "/root/workspace"
+        for f in SETS[size]:
+            parts = f.split("/")
+            dest = os.path.join(root, "ComfyUI", "models", parts[1], parts[2])
+            if os.path.exists(dest):
+                print("model present " + parts[2], flush=True)
+                continue
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            path = hf_hub_download(REPO, f, revision=REV, local_dir=os.path.join(root, "cache", "wan22-download"))
+            os.replace(path, dest)
+            print("model ready " + parts[2], flush=True)
+        print("models-ready MODEL_SIZE=" + size, flush=True)
+        PY
+
+        "$$PY" -c 'import torch; ok = torch.cuda.is_available(); print("gpu-check cuda_available=" + str(ok) + " device=" + (torch.cuda.get_device_name(0) if ok else "none"))'
+        "$$PY" "$$W/bin/fetch-wan22.py"
+
+        unset STUDIO_START
+        cd "$$C"
+        exec "$$PY" main.py --listen 0.0.0.0 --port 8188 --use-sage-attention --output-directory "$$W/output" --input-directory "$$W/input" --user-directory "$$W/user"
+    entrypoint: ["/bin/bash", "-c", "eval \"$$STUDIO_START\""]
+    volumes:
+      - /home/ubuntu/workspace/open-video-studio:/root/workspace
+    ports:
+      # Served to deployers only through the Brev Secure Link "open-comfyui".
+      - "8188:8188"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8188/system_stats', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60m
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
