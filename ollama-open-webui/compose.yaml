@@ -59,6 +59,9 @@ services:
     environment:
       OLLAMA_BASE_URL: "http://ollama:11434"
       DEFAULT_MODELS: "${MODEL:-gpt-oss:20b}"
+      # Use prompt-based tool calling so every model answers (Native tool-calling rejects non-tool models).
+      DEFAULT_MODEL_PARAMS: '{"function_calling":"legacy"}'
+      TOOL_SERVER_CONNECTIONS: "[]"
     volumes:
       - ${HOME:-/home/ubuntu}/workspace/open-webui:/app/backend/data
     ports:
