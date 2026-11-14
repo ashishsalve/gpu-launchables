@@ -30,7 +30,7 @@ Set the `BASE_MODEL` launch parameter when you deploy. It is downloaded into the
 The download runs in the background, and both UIs open before it finishes. Follow it from a terminal on the instance:
 
 ```
-docker logs -f lora-training-model-prefetch-1
+docker logs -f lora-training-ai-toolkit-1
 ```
 
 It ends with `BASE_MODEL ready: <model>`. Start training after that line, or AI Toolkit downloads the model again inside the job.
