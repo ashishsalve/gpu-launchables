@@ -74,6 +74,9 @@ services:
       ENABLE_OLLAMA_API: "false"
       OPENAI_API_BASE_URL: "http://vllm:8000/v1"
       DEFAULT_MODELS: "${MODEL:-Qwen/Qwen3-8B}"
+      # Prompt-based tool calling so every model answers.
+      DEFAULT_MODEL_PARAMS: '{"function_calling":"legacy"}'
+      TOOL_SERVER_CONNECTIONS: "[]"
     volumes:
       - ${HOME:-/home/ubuntu}/workspace/open-webui:/app/backend/data
     ports:
