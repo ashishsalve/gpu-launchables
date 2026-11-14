@@ -15,62 +15,39 @@
 #     CUDA 13.0 runtime, needs host NVIDIA driver >= 580.
 #   ghcr.io/bmaltais/kohya-ss-gui:v26.0.0 - kohya_ss release v26.0.0
 #     (2026-07-09). CUDA 12.8 wheels.
-#   No other image is used: the one-shot helpers reuse the AI Toolkit image.
 #
-# Persistence: everything lives under $HOME/workspace/lora-training on the host.
-# It survives Stop and is destroyed by Delete.
+# Startup: ai-toolkit creates the workspace folders, hands the Kohya ones to
+# the Kohya container user (uid 1000), starts the BASE_MODEL download in the
+# background and then runs the image's own /start.sh. kohya-gui waits until its
+# folders are writable, then runs the image's own Kohya GUI command.
+#
+# Persistence: everything lives under /home/ubuntu/workspace/lora-training on
+# the host. It survives Stop and is destroyed by Delete.
 #
 # Both UIs reserve the same GPU. Run one training job at a time.
 
 name: lora-training
 
 services:
-  prepare-dirs:
-    # One-shot: create the workspace folders and hand the Kohya ones to the
-    # container user (uid 1000), then exit.
-    image: ostris/aitoolkit:0.13.42
-    restart: "no"
-    entrypoint: ["sh", "-c"]
-    command:
-      - "mkdir -p /ws/hf-cache /ws/ai-toolkit/datasets /ws/ai-toolkit/output /ws/ai-toolkit/config /ws/kohya/models /ws/kohya/dataset /ws/kohya/outputs /ws/kohya/config /ws/kohya/cache && chown -R 1000:0 /ws/kohya && echo prepare-dirs done"
-    volumes:
-      - ${HOME:-/home/ubuntu}/workspace/lora-training:/ws
-
-  model-prefetch:
-    # One-shot: download BASE_MODEL into the shared Hugging Face cache, then exit.
-    # The UIs start without waiting for it.
-    image: ostris/aitoolkit:0.13.42
-    restart: "no"
-    depends_on:
-      prepare-dirs:
-        condition: service_completed_successfully
-    environment:
-      BASE_MODEL: "${BASE_MODEL:-black-forest-labs/FLUX.1-dev}"
-      HF_TOKEN: "${HF_TOKEN:-}"
-      HF_HOME: "/root/.cache/huggingface"
-    entrypoint: ["python3", "-c"]
-    command:
-      - "import os, sys; from huggingface_hub import snapshot_download; m = os.environ.get('BASE_MODEL', 'none'); print('BASE_MODEL prefetch skipped') if m == 'none' else None; sys.exit(0) if m == 'none' else None; snapshot_download(repo_id=m); print('BASE_MODEL ready: ' + m)"
-    volumes:
-      - ${HOME:-/home/ubuntu}/workspace/lora-training/hf-cache:/root/.cache/huggingface
-
   ai-toolkit:
     image: ostris/aitoolkit:0.13.42
     restart: unless-stopped
     shm_size: "16gb"
-    depends_on:
-      prepare-dirs:
-        condition: service_completed_successfully
     environment:
+      BASE_MODEL: "${BASE_MODEL:-black-forest-labs/FLUX.1-dev}"
       HF_TOKEN: "${HF_TOKEN:-}"
       HF_HOME: "/root/.cache/huggingface"
       NODE_ENV: "production"
       TZ: "UTC"
+    entrypoint: ["sh", "-c"]
+    command:
+      - "mkdir -p /ws/hf-cache /ws/ai-toolkit/datasets /ws/ai-toolkit/output /ws/ai-toolkit/config /ws/kohya/models /ws/kohya/dataset /ws/kohya/outputs /ws/kohya/config /ws/kohya/cache && chown -R 1000:0 /ws/kohya && echo workspace ready; (python3 -c \"import os; from huggingface_hub import snapshot_download; m = os.environ.get('BASE_MODEL', 'none'); print('BASE_MODEL prefetch skipped') if m == 'none' else (snapshot_download(repo_id=m), print('BASE_MODEL ready: ' + m))\" || echo BASE_MODEL prefetch failed) & exec /start.sh"
     volumes:
-      - ${HOME:-/home/ubuntu}/workspace/lora-training/hf-cache:/root/.cache/huggingface
-      - ${HOME:-/home/ubuntu}/workspace/lora-training/ai-toolkit/datasets:/app/ai-toolkit/datasets
-      - ${HOME:-/home/ubuntu}/workspace/lora-training/ai-toolkit/output:/app/ai-toolkit/output
-      - ${HOME:-/home/ubuntu}/workspace/lora-training/ai-toolkit/config:/app/ai-toolkit/config
+      - /home/ubuntu/workspace/lora-training:/ws
+      - /home/ubuntu/workspace/lora-training/hf-cache:/root/.cache/huggingface
+      - /home/ubuntu/workspace/lora-training/ai-toolkit/datasets:/app/ai-toolkit/datasets
+      - /home/ubuntu/workspace/lora-training/ai-toolkit/output:/app/ai-toolkit/output
+      - /home/ubuntu/workspace/lora-training/ai-toolkit/config:/app/ai-toolkit/config
     ports:
       # Served to deployers only through the Brev Secure Link "Open-AI-Toolkit".
       - "8675:8675"
@@ -94,22 +71,24 @@ services:
     user: "1000:0"
     shm_size: "16gb"
     depends_on:
-      prepare-dirs:
-        condition: service_completed_successfully
+      - ai-toolkit
     environment:
       HF_TOKEN: "${HF_TOKEN:-}"
       HF_HOME: "/home/1000/.cache/huggingface"
       SAFETENSORS_FAST_GPU: "1"
+    entrypoint: ["dumb-init", "--", "sh", "-c"]
+    command:
+      - "until [ -w /app/models ] && [ -w /dataset ] && [ -w /app/outputs ] && [ -w /app/config ] && [ -w /home/1000/.cache ]; do echo waiting for workspace folders; sleep 2; done; exec python3 kohya_gui.py --listen 0.0.0.0 --server_port 7860 --headless --noverify"
     tmpfs:
       - /tmp
     volumes:
-      - ${HOME:-/home/ubuntu}/workspace/lora-training/kohya/models:/app/models
-      - ${HOME:-/home/ubuntu}/workspace/lora-training/kohya/dataset:/dataset
-      - ${HOME:-/home/ubuntu}/workspace/lora-training/kohya/outputs:/app/outputs
-      - ${HOME:-/home/ubuntu}/workspace/lora-training/kohya/config:/app/config
-      - ${HOME:-/home/ubuntu}/workspace/lora-training/kohya/cache:/home/1000/.cache
+      - /home/ubuntu/workspace/lora-training/kohya/models:/app/models
+      - /home/ubuntu/workspace/lora-training/kohya/dataset:/dataset
+      - /home/ubuntu/workspace/lora-training/kohya/outputs:/app/outputs
+      - /home/ubuntu/workspace/lora-training/kohya/config:/app/config
+      - /home/ubuntu/workspace/lora-training/kohya/cache:/home/1000/.cache
       # The shared download cache, read-only: BASE_MODEL files are visible here.
-      - ${HOME:-/home/ubuntu}/workspace/lora-training/hf-cache:/hf-cache:ro
+      - /home/ubuntu/workspace/lora-training/hf-cache:/hf-cache:ro
     ports:
       # Served to deployers only through the Brev Secure Link "Open-Kohya-GUI".
       - "7860:7860"
