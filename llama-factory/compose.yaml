@@ -1,0 +1,69 @@
+# LLaMA Factory (LlamaBoard) - no-code LoRA, QLoRA and full fine-tuning of
+# 100+ open LLMs on one GPU. Brev Launchable, Docker Compose mode.
+#
+# Launch parameters:
+#   BASE_MODEL (Choice) - Hugging Face repo downloaded on first start into the
+#     workspace, pinned to a commit. "none" skips the download; any model can
+#     still be chosen inside LlamaBoard.
+#   HF_TOKEN (Text, no default) - only needed for gated bases such as
+#     meta-llama/Llama-3.1-8B-Instruct. Passed through service environment only,
+#     never on a command line.
+#
+# Pins (read 2026-11-14):
+#   hiyouga/llamafactory:0.9.5 - official image of release v0.9.5 (2026-05-30),
+#     pinned by digest. The image sets GRADIO_SERVER_PORT=7860, WORKDIR /app.
+#
+# Startup copies the bundled example datasets once, starts a background pinned
+# download of BASE_MODEL, then runs LlamaBoard. Served to deployers through the
+# Brev Secure Link on 7860. Data and checkpoints persist under
+# /root/workspace/llamafactory and survive Stop; Delete destroys them.
+#
+# One long-running service; ipc: host avoids the default 64 MB /dev/shm limit
+# during multi-worker data loading.
+
+name: llamaboard
+
+services:
+  llamaboard:
+    image: hiyouga/llamafactory:0.9.5@sha256:c5e769e047a19f9322800c9881a6270557ef0e6682f0145b50b322f8724de6b6
+    ipc: host
+    restart: unless-stopped
+    ports:
+      # Served to deployers only through the Brev Secure Link "open-llamaboard".
+      - "7860:7860"
+    environment:
+      BASE_MODEL: "${BASE_MODEL:-Qwen/Qwen3-8B}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/workspace/llamafactory/hf"
+      GRADIO_SERVER_NAME: "0.0.0.0"
+      GRADIO_SERVER_PORT: "7860"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - /bin/bash
+      - -lc
+      - |
+        set -euo pipefail
+        W=/root/workspace/llamafactory
+        mkdir -p "$$W/models" "$$W/logs" "$$W/hf"
+        cd "$$W"
+        test -d data || cp -r /app/data ./data
+        test -n "$${HF_TOKEN:-}" || unset HF_TOKEN
+        M="$${BASE_MODEL:-Qwen/Qwen3-8B}"
+        case "$$M" in
+          Qwen/Qwen3-8B) R=b968826d9c46dd6066d109eabc6255188de91218 ;;
+          Qwen/Qwen3-4B-Instruct-2507) R=cdbee75f17c01a7cc42f958dc650907174af0554 ;;
+          meta-llama/Llama-3.1-8B-Instruct) R=0e9e39f249a16976918f6564b8830bc894c89659 ;;
+          none) R= ;;
+          *) echo "unknown BASE_MODEL $$M" >&2; exit 1 ;;
+        esac
+        if test -n "$$R"; then
+          ( huggingface-cli download "$$M" --revision "$$R" --local-dir "$$W/models/$${M#*/}" \
+              && echo "fetch-model: $$M $$R complete" ) >>"$$W/logs/model-fetch.log" 2>&1 &
+        fi
+        exec llamafactory-cli webui
