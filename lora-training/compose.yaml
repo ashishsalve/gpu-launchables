@@ -1,0 +1,128 @@
+# LoRA training: AI Toolkit (ostris) + Kohya's GUI (bmaltais/kohya_ss) on one GPU.
+# Docker Compose.
+#
+# Launch parameters:
+#   BASE_MODEL - Hugging Face repo pre-downloaded into the shared cache on
+#     first start, or "none" to skip the download.
+#   HF_TOKEN - Hugging Face read token, no default. Needed for gated repos
+#     such as black-forest-labs/FLUX.1-dev (accept its licence on huggingface.co
+#     first). It is passed only through service environment, never a command.
+# Parameters are read by the first `docker compose up` and kept in each
+# container's configuration, so stop/start needs no re-entry.
+#
+# Pinned images:
+#   ostris/aitoolkit:0.13.42 - AI Toolkit image tag 0.13.42 (2026-11-10).
+#     CUDA 13.0 runtime, needs host NVIDIA driver >= 580.
+#   ghcr.io/bmaltais/kohya-ss-gui:v26.0.0 - kohya_ss release v26.0.0
+#     (2026-07-09). CUDA 12.8 wheels.
+#   No other image is used: the one-shot helpers reuse the AI Toolkit image.
+#
+# Persistence: everything lives under $HOME/workspace/lora-training on the host.
+# It survives Stop and is destroyed by Delete.
+#
+# Both UIs reserve the same GPU. Run one training job at a time.
+
+name: lora-training
+
+services:
+  prepare-dirs:
+    # One-shot: create the workspace folders and hand the Kohya ones to the
+    # container user (uid 1000), then exit.
+    image: ostris/aitoolkit:0.13.42
+    restart: "no"
+    entrypoint: ["sh", "-c"]
+    command:
+      - "mkdir -p /ws/hf-cache /ws/ai-toolkit/datasets /ws/ai-toolkit/output /ws/ai-toolkit/config /ws/kohya/models /ws/kohya/dataset /ws/kohya/outputs /ws/kohya/config /ws/kohya/cache && chown -R 1000:0 /ws/kohya && echo prepare-dirs done"
+    volumes:
+      - ${HOME:-/home/ubuntu}/workspace/lora-training:/ws
+
+  model-prefetch:
+    # One-shot: download BASE_MODEL into the shared Hugging Face cache, then exit.
+    # The UIs start without waiting for it.
+    image: ostris/aitoolkit:0.13.42
+    restart: "no"
+    depends_on:
+      prepare-dirs:
+        condition: service_completed_successfully
+    environment:
+      BASE_MODEL: "${BASE_MODEL:-black-forest-labs/FLUX.1-dev}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+    entrypoint: ["python3", "-c"]
+    command:
+      - "import os, sys; from huggingface_hub import snapshot_download; m = os.environ.get('BASE_MODEL', 'none'); print('BASE_MODEL prefetch skipped') if m == 'none' else None; sys.exit(0) if m == 'none' else None; snapshot_download(repo_id=m); print('BASE_MODEL ready: ' + m)"
+    volumes:
+      - ${HOME:-/home/ubuntu}/workspace/lora-training/hf-cache:/root/.cache/huggingface
+
+  ai-toolkit:
+    image: ostris/aitoolkit:0.13.42
+    restart: unless-stopped
+    shm_size: "16gb"
+    depends_on:
+      prepare-dirs:
+        condition: service_completed_successfully
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+      NODE_ENV: "production"
+      TZ: "UTC"
+    volumes:
+      - ${HOME:-/home/ubuntu}/workspace/lora-training/hf-cache:/root/.cache/huggingface
+      - ${HOME:-/home/ubuntu}/workspace/lora-training/ai-toolkit/datasets:/app/ai-toolkit/datasets
+      - ${HOME:-/home/ubuntu}/workspace/lora-training/ai-toolkit/output:/app/ai-toolkit/output
+      - ${HOME:-/home/ubuntu}/workspace/lora-training/ai-toolkit/config:/app/ai-toolkit/config
+    ports:
+      # Served to deployers only through the Brev Secure Link "Open-AI-Toolkit".
+      - "8675:8675"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "-o", "/dev/null", "http://localhost:8675/"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  kohya-gui:
+    image: ghcr.io/bmaltais/kohya-ss-gui:v26.0.0
+    restart: unless-stopped
+    user: "1000:0"
+    shm_size: "16gb"
+    depends_on:
+      prepare-dirs:
+        condition: service_completed_successfully
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/home/1000/.cache/huggingface"
+      SAFETENSORS_FAST_GPU: "1"
+    tmpfs:
+      - /tmp
+    volumes:
+      - ${HOME:-/home/ubuntu}/workspace/lora-training/kohya/models:/app/models
+      - ${HOME:-/home/ubuntu}/workspace/lora-training/kohya/dataset:/dataset
+      - ${HOME:-/home/ubuntu}/workspace/lora-training/kohya/outputs:/app/outputs
+      - ${HOME:-/home/ubuntu}/workspace/lora-training/kohya/config:/app/config
+      - ${HOME:-/home/ubuntu}/workspace/lora-training/kohya/cache:/home/1000/.cache
+      # The shared download cache, read-only: BASE_MODEL files are visible here.
+      - ${HOME:-/home/ubuntu}/workspace/lora-training/hf-cache:/hf-cache:ro
+    ports:
+      # Served to deployers only through the Brev Secure Link "Open-Kohya-GUI".
+      - "7860:7860"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7860/', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -1,0 +1,87 @@
+# Open WebUI + vLLM on one GPU (Docker Compose).
+# Launch parameters:
+#   MODEL    - Hugging Face model id vLLM serves (default Qwen/Qwen3-8B).
+#   HF_TOKEN - Hugging Face read token, no default; only for gated models.
+# Parameters are read by the first `docker compose up` and kept in each
+# container's configuration, so stop/start needs no re-entry. HF_TOKEN reaches
+# only the vllm service environment, never a command, image name or label.
+#
+# Pinned images:
+#   vllm/vllm-openai:v0.33.0 - vLLM release v0.33.0 (2026-11-02). Built on
+#     CUDA 13.0, so the host NVIDIA driver must support CUDA 13.
+#   ghcr.io/open-webui/open-webui:v0.13.3 - Open WebUI release v0.13.3
+#     (2026-11-08).
+#   Models are downloaded from Hugging Face on first start.
+#
+# GPU memory: Qwen3-32B-FP8 weights are 32.0 GiB, so that choice needs a
+# 48 GB GPU. --max-model-len 16384 bounds the KV cache; raise it only with
+# GPU memory to spare.
+#
+# Persistence: the Hugging Face cache and Open WebUI data live under
+# $HOME/workspace on the host, which survives stop and is destroyed on delete.
+
+name: openwebui-vllm
+
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.33.0
+    restart: unless-stopped
+    ipc: host
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+    volumes:
+      - ${HOME:-/home/ubuntu}/workspace/huggingface:/root/.cache/huggingface
+    # Image entrypoint is `vllm serve` (docker/Dockerfile at v0.33.0).
+    command:
+      - "${MODEL:-Qwen/Qwen3-8B}"
+      - "--served-model-name"
+      - "${MODEL:-Qwen/Qwen3-8B}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--max-model-len"
+      - "16384"
+      - "--gpu-memory-utilization"
+      - "0.90"
+    ports:
+      # Host-local only: reach the API with `brev port-forward`, never a public port.
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      # The vllm-openai image ships no curl; python3 is present.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1800s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.13.3
+    restart: unless-stopped
+    depends_on:
+      vllm:
+        # Start the UI at once; the model appears when vLLM finishes loading.
+        condition: service_started
+    environment:
+      ENABLE_OLLAMA_API: "false"
+      OPENAI_API_BASE_URL: "http://vllm:8000/v1"
+      DEFAULT_MODELS: "${MODEL:-Qwen/Qwen3-8B}"
+    volumes:
+      - ${HOME:-/home/ubuntu}/workspace/open-webui:/app/backend/data
+    ports:
+      # Served to deployers only through the Brev Secure Link "Chat-in-Open-WebUI".
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s

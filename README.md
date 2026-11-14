@@ -8,3 +8,6 @@ Every application folder has its own README that explains what it runs, the GPU 
 | Application | Folder |
 | --- | --- |
 | Ollama + Open WebUI starter | [ollama-open-webui](ollama-open-webui/) |
+| Open WebUI + vLLM | [open-webui-vllm](open-webui-vllm/) |
+| LoRA training (ai-toolkit + kohya_ss) | [lora-training](lora-training/) |
+| LlamaFactory (LlamaBoard) | [llama-factory](llama-factory/) |
