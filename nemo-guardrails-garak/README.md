@@ -77,8 +77,16 @@ They survive a stop and start of the instance. They are removed when the instanc
 
 ## Stop or delete to control cost
 
-- **Stop** the instance from the Brev console when you are not using it. Models, reports and chats are kept, and every service starts again on the next start (`restart: unless-stopped`). Storage is still billed while the instance is stopped.
+- **Stop** the instance from the Brev console when you are not using it. Models, reports and chats are kept, and every service is recreated on the next start (see Stop and start). Storage is still billed while the instance is stopped.
 - **Delete** the instance when you are finished. This removes the instance and all of its data, including downloaded models, reports and chat history.
+
+## Stop and start
+
+Stopping the instance removes the lab's containers; everything under ~/workspace is kept. Starting it again recreates the containers automatically, usually within a few minutes. If the lab is not back after 5 minutes, open a terminal on the instance and run:
+
+```
+cd /home/ubuntu/workspace && sudo docker compose up -d
+```
 
 ## Responsible use
 

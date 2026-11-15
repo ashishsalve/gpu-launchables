@@ -66,8 +66,16 @@ They survive a stop and start of the instance. They are removed when the instanc
 
 ## Stop or delete to control cost
 
-- **Stop** the instance from the Brev console when you are not using it. Your models and uploads are kept, and both containers start again on the next start (`restart: unless-stopped`). Storage is still billed while the instance is stopped.
+- **Stop** the instance from the Brev console when you are not using it. Your models and uploads are kept, and both containers are recreated on the next start (see Stop and start). Storage is still billed while the instance is stopped.
 - **Delete** the instance when you are finished. This removes the instance and all of its data, including downloaded models and uploads.
+
+## Stop and start
+
+Stopping the instance removes the studio's containers; everything under ~/workspace is kept. Starting it again recreates the containers automatically, usually within a few minutes. If the studio is not back after 5 minutes, open a terminal on the instance and run:
+
+```
+cd /home/ubuntu/workspace && sudo docker compose up -d
+```
 
 ## Model licence
 

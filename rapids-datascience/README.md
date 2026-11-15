@@ -1,10 +1,14 @@
 # RAPIDS Data Science with cuDF and cuML
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M8aZ3FqwckUgj9tV7qQc9B3vVG)
+
+Launchable ID: env-3M8aZ3FqwckUgj9tV7qQc9B3vVG
+
 GPU data science in JupyterLab with [NVIDIA RAPIDS](https://github.com/rapidsai). Run your pandas code on the GPU with cuDF and your scikit-learn code with cuML with no code changes, run Polars queries on its GPU engine with engine="gpu", train XGBoost on the GPU with device="cuda", and compare each against the CPU on the same instance.
 
 Current versions: RAPIDS 26.10 (`rapidsai/notebooks:26.10-cuda12-py3.12`, CUDA 12, Python 3.12)
 
-Last smoke: not yet run
+Last smoke: 2026-11-15, fresh deploy on one NVIDIA L4 24GB, including stop and start.
 
 ## What it runs
 
@@ -65,8 +69,16 @@ Save your notebooks and data in the `workspace` folder in JupyterLab. It is stor
 
 ## Stop or delete to control cost
 
-- **Stop** the instance from the Brev console when you are not using it. Your `workspace` folder is kept, and JupyterLab starts again on the next start (`restart: unless-stopped`). Storage is still billed while the instance is stopped.
+- **Stop** the instance from the Brev console when you are not using it. Your `workspace` folder is kept, and the JupyterLab container is recreated on the next start (see Stop and start). Storage is still billed while the instance is stopped.
 - **Delete** the instance when you are finished. This removes the instance and all of its data.
+
+## Stop and start
+
+Stopping the instance removes the JupyterLab container; everything under ~/workspace is kept, including your notebooks and your JupyterLab token. Starting it again recreates the container automatically, usually within a few minutes. If JupyterLab is not back after 5 minutes, open a terminal on the instance and run:
+
+```
+cd /home/ubuntu/workspace && sudo docker compose up -d
+```
 
 ## Files
 

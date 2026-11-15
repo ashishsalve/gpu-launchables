@@ -1,5 +1,9 @@
 # Paperclip Multi-Agent Team on Nemotron
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M8bFcmnzaZcFNHTjlLhZ2VVlaA)
+
+Launchable ID: env-3M8bFcmnzaZcFNHTjlLhZ2VVlaA
+
 Run a team of AI agents on your own GPU. [Paperclip](https://github.com/paperclipai/paperclip) is an open-source agent orchestration app: you set up a company with an org chart, goals and tickets, and the agents work through them. Here every agent thinks with an NVIDIA Nemotron model that [vLLM](https://github.com/vllm-project/vllm) serves on the same instance, so no external model API key is needed.
 
 ## What it runs
@@ -11,7 +15,7 @@ Run a team of AI agents on your own GPU. [Paperclip](https://github.com/papercli
 
 Current versions: Paperclip v2026.1106.0, vLLM v0.27.1, default model nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4.
 
-Last smoke: not yet run.
+Last smoke: 2026-11-15, fresh deploy on one NVIDIA L40S 48GB, including stop and start.
 
 Paperclip serves its web UI on port 3100. Open it only through the open-paperclip Secure Link, which requires a Brev sign-in; do not open port 3100 in the instance firewall. The vLLM API has no API key and is bound to the instance itself (127.0.0.1:8000), so it is not reachable from outside the instance. Paperclip's agents reach it through the OpenCode adapter, where the model is always named `vllm-local/agent-model`.
 
@@ -71,8 +75,16 @@ They survive a stop and start of the instance. They are removed when the instanc
 
 ## Stop or delete to control cost
 
-- **Stop** the instance from the Brev console when you are not using it. Your company, agents and models are kept, and both containers start again on the next start (`restart: unless-stopped`). Storage is still billed while the instance is stopped.
+- **Stop** the instance from the Brev console when you are not using it. Your company, agents and models are kept, and both containers are recreated on the next start (see Stop and start). Storage is still billed while the instance is stopped.
 - **Delete** the instance when you are finished. This removes the instance and all of its data.
+
+## Stop and start
+
+Stopping the instance removes the Paperclip and vLLM containers; everything under ~/workspace is kept. Starting it again recreates the containers automatically, usually within a few minutes. If Paperclip is not back after 5 minutes, open a terminal on the instance and run:
+
+```
+cd /home/ubuntu/workspace && sudo docker compose up -d
+```
 
 ## Licences
 

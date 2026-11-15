@@ -80,8 +80,16 @@ They survive a stop and start of the instance. They are removed when the instanc
 
 ## Stop or delete to control cost
 
-- **Stop** the instance from the Brev console when you are not using it. Your notebooks and models are kept. Storage is still billed while the instance is stopped.
+- **Stop** the instance from the Brev console when you are not using it. Your notebooks and models are kept, and the containers are recreated on the next start (see Stop and start). Storage is still billed while the instance is stopped.
 - **Delete** the instance when you are finished. This removes the instance and all of its data, including notebooks, podcasts and downloaded models.
+
+## Stop and start
+
+Stopping the instance removes the Open Notebook containers; everything under ~/workspace is kept. Starting it again recreates the containers automatically, usually within a few minutes. If Open Notebook is not back after 5 minutes, open a terminal on the instance and run:
+
+```
+cd /home/ubuntu/workspace && sudo docker compose up -d
+```
 
 ## Licences and notices
 

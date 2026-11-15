@@ -2,9 +2,13 @@
 
 Chat with your documents on your own GPU. [RAGFlow](https://github.com/infiniflow/ragflow) 1.0 runs with NVIDIA Nemotron models served by [vLLM](https://github.com/vllm-project/vllm): the [Nemotron 3.5 Bolt E4B](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-BF16) chat model and the [Nemotron 3.5 Embed 1B](https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16) embedding model, with the [Infinity](https://github.com/infiniflow/infinity) vector engine. Your documents and the RAG pipeline stay on the instance.
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M8amkBXTPnhVDHsznOXkc6jOf9)
+
+Launchable ID: env-3M8amkBXTPnhVDHsznOXkc6jOf9
+
 Current versions: infiniflow/ragflow:v1.0.0, vllm/vllm-openai:v0.33.0, infiniflow/infinity:v0.7.5-x64-v3, mysql:8.0.40, pgsty/silo:RELEASE.2026-08-06T00-00-00Z, apache/kvrocks:2.16.0, nats:2.14.2; models nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-BF16, nvidia/Nemotron-3.5-Embed-1B-BF16
 
-Last smoke: not yet run.
+Last smoke: 2026-11-15, fresh deploy on one NVIDIA L40S 48GB, including stop and start.
 
 ## What you get
 
@@ -74,11 +78,19 @@ RAGFlow also creates an administrator account, `admin@ragflow.io`, for its separ
 
 ## Stop vs delete
 
-- **Stop** pauses GPU billing. Storage keeps billing while stopped. On start, every service comes back by itself (`restart: unless-stopped`) with the same models; no parameter needs re-entering. The models reload from the local cache, which takes a few minutes.
+- **Stop** pauses GPU billing. Storage keeps billing while stopped. On start, every service is recreated automatically with the same models (see Stop and start); no parameter needs re-entering. The models reload from the local cache, which takes a few minutes.
 - **Delete** ends all billing and destroys the instance and all data on it. It cannot be undone. Export anything you need first, for example:
 
 ```
 scp -r INSTANCE_NAME:~/workspace/ragflow/minio ./ragflow-documents
+```
+
+## Stop and start
+
+Stopping the instance removes the RAGFlow containers; everything under ~/workspace is kept. Starting it again recreates the containers automatically, usually within a few minutes. If RAGFlow is not back after 5 minutes, open a terminal on the instance and run:
+
+```
+cd /home/ubuntu/workspace && sudo docker compose up -d
 ```
 
 ## Files

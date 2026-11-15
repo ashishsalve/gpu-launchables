@@ -1,12 +1,16 @@
 # Cosmos 3 Nano World Model Studio
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M8aVI8A9ooLqzhwIEkWuuY27Pm)
+
+Launchable ID: env-3M8aVI8A9ooLqzhwIEkWuuY27Pm
+
 Generate videos with [NVIDIA Cosmos3-Nano](https://huggingface.co/nvidia/Cosmos3-Nano), the open Cosmos 3 world model for physical AI, on your own GPU. [vLLM-Omni](https://github.com/vllm-project/vllm-omni) serves the model, and a small Gradio studio gives you text-to-video and image-to-video in the browser. Use it to prototype scenes and synthetic data clips for robotics and autonomous systems.
 
 Built on NVIDIA Cosmos.
 
 Current versions: vLLM-Omni `vllm/vllm-omni:cosmos3` (pinned by digest, 2026-10-19 build), nvidia/Cosmos3-Nano revision `45666784803b3a7ad577e0def405f9afcc3bddb2`, Gradio 6.32.0, Python 3.12.16.
 
-Last smoke: not yet recorded
+Last smoke: 2026-11-15, fresh deploy on one NVIDIA L40S 48GB, including stop and start.
 
 ## What it runs
 
@@ -67,8 +71,16 @@ They survive a stop and start of the instance. They are removed when the instanc
 
 ## Stop or delete to control cost
 
-- **Stop** the instance from the Brev console when you are not using it. The model cache and your videos are kept, and both containers start again on the next start (`restart: unless-stopped`). Storage is still billed while the instance is stopped.
+- **Stop** the instance from the Brev console when you are not using it. The model cache and your videos are kept, and both containers are recreated on the next start (see Stop and start). Storage is still billed while the instance is stopped.
 - **Delete** the instance when you are finished. This removes the instance and all of its data, including downloaded models and generated videos.
+
+## Stop and start
+
+Stopping the instance removes the studio's containers; everything under ~/workspace is kept. Starting it again recreates the containers automatically, usually within a few minutes. If the studio is not back after 5 minutes, open a terminal on the instance and run:
+
+```
+cd /home/ubuntu/workspace && sudo docker compose up -d
+```
 
 ## Licences and notices
 

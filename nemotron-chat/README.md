@@ -2,9 +2,13 @@
 
 A private chat assistant on your own GPU, powered by NVIDIA Nemotron. [vLLM](https://github.com/vllm-project/vllm) serves [NVIDIA Nemotron 3.5 Lightning](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) through an OpenAI-compatible API, and [Open WebUI](https://github.com/open-webui/open-webui) gives you the browser chat interface, started together with Docker Compose. Prompts are answered by the model on your instance; no third-party model API is called.
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M8aArulP2ZTX7HwqGLf4pwRT6z)
+
+Launchable ID: env-3M8aArulP2ZTX7HwqGLf4pwRT6z
+
 Current versions: vllm/vllm-openai:v0.27.1, ghcr.io/open-webui/open-webui:v0.13.3, default model nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
 
-Last smoke: not yet run
+Last smoke: 2026-11-15, fresh deploy on one NVIDIA L40S 48GB, including stop and start.
 
 ## What it runs
 
@@ -65,8 +69,16 @@ They survive a stop and start of the instance. They are removed when the instanc
 
 ## Stop or delete to control cost
 
-- **Stop** the instance from the Brev console when you are not using it. Your models and chats are kept, and both containers start again on the next start (`restart: unless-stopped`). Storage is still billed while the instance is stopped.
+- **Stop** the instance from the Brev console when you are not using it. Your models and chats are kept, and both containers are recreated on the next start (see Stop and start). Storage is still billed while the instance is stopped.
 - **Delete** the instance when you are finished. This removes the instance and all of its data, including downloaded models and chat history.
+
+## Stop and start
+
+Stopping the instance removes the Open WebUI and vLLM containers; everything under ~/workspace is kept. Starting it again recreates the containers automatically, usually within a few minutes. If Open WebUI is not back after 5 minutes, open a terminal on the instance and run:
+
+```
+cd /home/ubuntu/workspace && sudo docker compose up -d
+```
 
 ## Licences and attribution
 

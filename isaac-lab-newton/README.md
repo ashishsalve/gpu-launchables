@@ -1,10 +1,14 @@
 # Isaac Lab + Newton Robot Learning
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M8arIbDn5RySQJP1XtedUwZdFa)
+
+Launchable ID: env-3M8arIbDn5RySQJP1XtedUwZdFa
+
 Train reinforcement learning policies for robots on one GPU. [Isaac Lab](https://github.com/isaac-sim/IsaacLab) 3.0 runs in its kit-less mode on the [Newton](https://github.com/newton-physics/newton) physics engine: headless, with no Isaac Sim install. You get a JupyterLab notebook to start a training run, TensorBoard to watch it, and the `isaaclab` command line for everything else. [MuJoCo Playground](https://github.com/google-deepmind/mujoco_playground) is available as an option.
 
 Current versions: Isaac Lab 3.0.0, Newton 1.6.1, PyTorch 2.11.0 (CUDA 13.0), rsl_rl 5.5.1, MuJoCo Playground 1.0.1 (optional)
 
-Last smoke: not yet run
+Last smoke: 2026-11-15, fresh deploy on one NVIDIA L40S 48GB, including stop and start.
 
 ## What it runs
 
@@ -24,7 +28,7 @@ Isaac Sim is not installed. Features that need Isaac Sim, such as the Kit viewpo
 
 - NVIDIA GPU: default 1x L40S 48GB.
 - NVIDIA driver 580.65.06 or newer, as Isaac Lab 3.0 requires. `setup.sh` checks this first and stops with a clear message if the driver is older.
-- 80 GiB disk for the Python environments, the package cache and training logs.
+- 150 GiB disk for the Python environments, the package cache and training logs.
 
 ## Options
 

@@ -1,10 +1,14 @@
 # OpenHands Coding Agent on Nemotron
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M8b2pM4xEhrOmr5yEObCVI7kyS)
+
+Launchable ID: env-3M8b2pM4xEhrOmr5yEObCVI7kyS
+
 A private AI software engineer on your own GPU. [OpenHands](https://github.com/OpenHands/OpenHands) is an open-source coding agent that writes, runs and fixes code. Here it talks to [NVIDIA Nemotron 3.5 Lightning](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4), served on the same instance by [vLLM](https://github.com/vllm-project/vllm) through an OpenAI-compatible API. The model runs on the same instance, so prompts are not sent to a hosted model API.
 
 Current versions: OpenHands 1.40.0, vLLM v0.27.1, NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (default model)
 
-Last smoke: not yet run
+Last smoke: 2026-11-15, fresh deploy on one NVIDIA L40S 48GB, including stop and start.
 
 ## What it runs
 
@@ -72,8 +76,16 @@ Projects in `/home/ubuntu/workspace/projects` are owned by the OpenHands user (u
 
 ## Stop or delete to control cost
 
-- **Stop** the instance from the Brev console when you are not using it. Your models, settings and projects are kept, and both containers start again on the next start (`restart: unless-stopped`). Storage is still billed while the instance is stopped.
+- **Stop** the instance from the Brev console when you are not using it. Your models, settings and projects are kept, and both containers are recreated on the next start (see Stop and start). Storage is still billed while the instance is stopped.
 - **Delete** the instance when you are finished. This removes the instance and all of its data, including downloaded models and your projects. Push any work you want to keep to your own git remote first.
+
+## Stop and start
+
+Stopping the instance removes the OpenHands containers; everything under ~/workspace is kept. Starting it again recreates the containers automatically, usually within a few minutes. If OpenHands is not back after 5 minutes, open a terminal on the instance and run:
+
+```
+cd /home/ubuntu/workspace && sudo docker compose up -d
+```
 
 ## Safety
 
