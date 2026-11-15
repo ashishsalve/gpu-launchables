@@ -2,9 +2,13 @@
 
 Red team a chat model and see what guardrails change, on one GPU. [garak](https://github.com/NVIDIA/garak), the LLM vulnerability scanner, sends jailbreak and prompt-injection probes to the model twice: once directly, and once through [NeMo Guardrails](https://github.com/NVIDIA-NeMo/Guardrails) with content safety rails powered by [Nemotron 3.5 Content Safety](https://huggingface.co/nvidia/Nemotron-3.5-Content-Safety). [Open WebUI](https://github.com/open-webui/open-webui) shows the raw and the guarded model side by side, so you can try your own prompts against both.
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M8bOSWcMAZsaOnuaytHUvAEC0v)
+
+Launchable ID: env-3M8bOSWcMAZsaOnuaytHUvAEC0v
+
 Current versions: NeMo Guardrails 0.24.1, garak 0.17.1, vLLM v0.20.2, Open WebUI v0.13.3
 
-Last smoke: not yet run
+Last smoke: 2026-11-15, fresh deploy on one NVIDIA L40S 48GB, including stop and start.
 
 ## What it runs
 
@@ -33,7 +37,7 @@ The Launchable deploys on one NVIDIA L40S 48GB, with 200 GiB of disk for the con
 1. Deploy and wait until the instance is Running. The first start downloads the images, both models and the Python packages, which takes a while.
 2. Open the **compare-raw-vs-guarded** link (Open WebUI). The first account you create becomes the Open WebUI admin, so create it right away.
 3. Open WebUI lists the chat model twice: once from the direct vLLM connection and once from the NeMo Guardrails connection (`compose.yaml` gives them the prefixes `raw` and `guarded`). Open a second chat with the other one and send the same prompt to both. When a rail blocks a prompt or an answer, the guarded model replies with a refusal instead.
-4. Open the **garak-reports** link. When both models are ready, garak scans each one once with a fixed probe set (DAN-style jailbreak prompts, jailbreak prompts collected in the wild, and prompt-injection hijacks). Each scan's reports use the prefix `raw-model` or `guarded` and appear in this list when that scan finishes.
+4. Open the **garak-reports** link. When both models are ready, garak scans each one once with a fixed probe set (DAN-style jailbreak prompts, jailbreak prompts collected in the wild, and prompt-injection hijacks). Each scan's reports use the prefix `raw-model` or `guarded` and appear in this list when that scan finishes. The garak-reports page itself starts only after the first scan has finished; until then the link does not load.
 
 ### Run the scan again
 
