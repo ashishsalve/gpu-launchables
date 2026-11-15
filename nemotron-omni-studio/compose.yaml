@@ -46,8 +46,10 @@ services:
       VLLM_START: |
         set -euo pipefail
         python3 -c 'import av, soundfile, soxr, scipy' 2>/dev/null || python3 -m pip install --no-cache-dir av==19.0.2 soundfile==0.14.0 soxr==1.1.0 scipy==1.18.1
-        case "$$MODEL" in Qwen/Qwen2.5-Omni-7B) MML=32768 ;; *) MML=65536 ;; esac
-        exec vllm serve "$$MODEL" --served-model-name "$$MODEL" --host 0.0.0.0 --port 8000 --trust-remote-code --max-model-len "$$MML" --max-num-seqs 8 --gpu-memory-utilization 0.90 --allowed-local-media-path /media --media-io-kwargs '{"video": {"fps": 2, "num_frames": 128}}' --limit-mm-per-prompt '{"image": 1, "video": 1, "audio": 1}'
+        # Nemotron 3 Nano Omni: --reasoning-parser nemotron_v3 per its model card,
+        # so reasoning text goes to the reasoning field, not content.
+        case "$$MODEL" in Qwen/Qwen2.5-Omni-7B) MML=32768; RP="" ;; *) MML=65536; RP="--reasoning-parser nemotron_v3" ;; esac
+        exec vllm serve "$$MODEL" --served-model-name "$$MODEL" --host 0.0.0.0 --port 8000 --trust-remote-code $$RP --max-model-len "$$MML" --max-num-seqs 8 --gpu-memory-utilization 0.90 --allowed-local-media-path /media --media-io-kwargs '{"video": {"fps": 2, "num_frames": 128}}' --limit-mm-per-prompt '{"image": 1, "video": 1, "audio": 1}'
     volumes:
       - /home/ubuntu/workspace/huggingface:/root/.cache/huggingface
       # Uploads from the Studio app; vLLM reads them as file:///media/... URLs.

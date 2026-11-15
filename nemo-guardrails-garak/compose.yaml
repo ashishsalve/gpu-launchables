@@ -102,9 +102,10 @@ services:
         done
         EXTRA=""
         if [ "$$CHAT_MODEL" = "nvidia/NVIDIA-Nemotron-Nano-9B-v2" ]; then
-          # nemotron_v3 (a DeepSeek-R1-style parser) moves the reasoning text
-          # and its closing </think> out of the answer.
-          EXTRA="--trust-remote-code --mamba_ssm_cache_dtype float32 --reasoning-parser nemotron_v3"
+          # No --reasoning-parser: vLLM v0.20.2 has no built-in parser for this
+          # model (nemotron_v3 fails to find its think tokens) and the model card
+          # names none.
+          EXTRA="--trust-remote-code --mamba_ssm_cache_dtype float32"
         fi
         # Explicit --max-num-seqs for every model: the vLLM default (1024) can
         # exceed the Mamba cache blocks of Nemotron hybrid models at startup.
