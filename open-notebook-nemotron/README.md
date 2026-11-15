@@ -1,10 +1,14 @@
 # Open Notebook on Nemotron
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M8a9DRg8X8LZyGjEtqCwWcjaYS)
+
+Launchable ID: env-3M8a9DRg8X8LZyGjEtqCwWcjaYS
+
 A private research assistant on your own GPU. [Open Notebook](https://github.com/lfnovo/open-notebook) is an open-source alternative to NotebookLM: add PDFs, web pages and notes to a notebook, chat with your documents, search them, and turn them into a two-voice podcast. In this environment every model runs on the instance itself: NVIDIA Nemotron on [vLLM](https://github.com/vllm-project/vllm) writes the answers and podcast scripts, NVIDIA Nemotron 3.5 Embed powers search, and [Speaches](https://github.com/speaches-ai/speaches) speaks and transcribes with Kokoro and faster-whisper. No cloud API key is needed.
 
 Current versions: Open Notebook 1.15.1, vLLM 0.33.0, Speaches 0.8.3, SurrealDB 2.7.0
 
-Last smoke: not yet run
+Last smoke: 2026-11-15, fresh deploy on one NVIDIA L40S 48GB, including stop and start.
 
 ## What it runs
 
@@ -85,7 +89,7 @@ They survive a stop and start of the instance. They are removed when the instanc
 
 ## Stop and start
 
-Stopping the instance removes the Open Notebook containers; everything under ~/workspace is kept. Starting it again recreates the containers automatically, usually within a few minutes. If Open Notebook is not back after 5 minutes, open a terminal on the instance and run:
+Stopping can take up to 10 minutes. Stopping the instance removes the Open Notebook containers; everything under ~/workspace is kept. Starting it again recreates the containers automatically, usually within a few minutes. If Open Notebook is not back after 5 minutes, open a terminal on the instance and run:
 
 ```
 cd /home/ubuntu/workspace && sudo docker compose up -d
