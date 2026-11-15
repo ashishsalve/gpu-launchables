@@ -2,13 +2,13 @@
 
 ComfyUI with ComfyUI-Manager and a pinned, audited set of 12 custom-node packs, in one prebuilt container image on a single NVIDIA GPU. Pick FLUX.1 or Qwen-Image at launch; your models, workflows and outputs persist across Stop.
 
-[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=LAUNCHABLE_ID_PENDING)
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M7UQ4Vwk9PM9fd7gTp51ExxPCK)
 
-Launchable ID: LAUNCHABLE_ID_PENDING
+Launchable ID: env-3M7UQ4Vwk9PM9fd7gTp51ExxPCK
 
 Current versions: ComfyUI v0.45.0 (989d93d0d968e704c589ce0146bb18c77f6b50cc), comfyui_manager 4.2.2, PyTorch 2.8.0 with CUDA 12.8, 12 node packs at the commits in docs/nodes.md, image ghcr.io/ashishsalve/comfyui-pro:0.45.0@sha256:3883a324527680f5028983b99581afd32fff8fa8bfdcf1dbea27b0b5480dfeef
 
-Last smoke: NOT YET SMOKED
+Last smoke: 2026-11-15, fresh deploy on one NVIDIA L40S 48GB. ComfyUI answered about 8 minutes after launch with all 12 custom node packs imported.
 
 ## Why "audited"
 

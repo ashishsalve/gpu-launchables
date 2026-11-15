@@ -8,7 +8,7 @@ Launchable ID: env-3M7SG64BL2IkL3acLixc2Kx25wE
 
 Current versions: ComfyUI v0.45.0, ComfyUI-WanVideoWrapper a7439db (1.4.8), Wan 2.2 weights from Comfy-Org/Wan_2.2_ComfyUI_Repackaged ee6f4a4, SageAttention 2.2.0, FlashAttention 2.8.3.post2, pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
 
-Last smoke: NOT YET SMOKED
+Last smoke: 2026-11-15, fresh deploy on one NVIDIA L4 24GB with the 5B model. ComfyUI answered about 16 minutes after launch with the WanVideo nodes loaded.
 
 ## What you get
 

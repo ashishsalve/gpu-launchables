@@ -8,7 +8,7 @@ Launchable ID: env-3M7TTV4QXYErJeINLDl77bsMVyb
 
 Current versions: chatterbox-tts 0.1.7 (torch 2.6.0), whisperx 3.8.6 (torch 2.8.0, faster-whisper 1.2.1, ctranslate2 4.8.5, pyannote-audio 4.0.7), python:3.11.18-slim-bookworm
 
-Last smoke: not yet run. Versions were read from their registries on 2026-11-14.
+Last smoke: 2026-11-15, fresh deploy on one NVIDIA L4 24GB. /health was ready about 14 minutes after launch; a speech request round-tripped through transcription word for word.
 
 ## What it runs
 
