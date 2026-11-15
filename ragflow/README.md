@@ -8,7 +8,7 @@ Launchable ID: env-3M7Rp4TmPPfR0piWdfBqcHweyVl
 
 Current versions: infiniflow/ragflow:v1.0.0, vllm/vllm-openai:v0.33.0, infiniflow/infinity:v0.7.5-x64-v3, mysql:8.0.40, pgsty/silo:RELEASE.2026-08-06T00-00-00Z, apache/kvrocks:2.16.0, nats:2.14.2
 
-Last smoke: NOT YET SMOKED
+Last smoke: 2026-11-15, fresh deploy on one NVIDIA L40S 48GB. All eight services were up about 22 minutes after launch (most of it pulling the vLLM image); health, chat and embeddings all answered.
 
 ## What you get
 
