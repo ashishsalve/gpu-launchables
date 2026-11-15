@@ -8,9 +8,13 @@ A multimodal studio for image, video and audio understanding on your own GPU. [v
 
 Uploads never leave the instance.
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M8a9cKCTehBUEgzwkv7tqk9gZK)
+
+Launchable ID: env-3M8a9cKCTehBUEgzwkv7tqk9gZK
+
 Current versions: vLLM v0.33.0 (image pinned by digest), Gradio 6.32.0, Python 3.12.12, model nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8
 
-Last smoke: not yet run
+Last smoke: 2026-11-15, fresh deploy on one NVIDIA L40S 48GB, including stop and start.
 
 ## What it runs
 
