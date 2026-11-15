@@ -2,9 +2,9 @@
 
 Chat with your documents on your own GPU. [RAGFlow](https://github.com/infiniflow/ragflow) 1.0 runs with local models served by [vLLM](https://github.com/vllm-project/vllm): a Qwen3 chat model and the Qwen3 embedding model, with the [Infinity](https://github.com/infiniflow/infinity) vector engine. Nothing leaves the instance.
 
-[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=LAUNCHABLE_ID_PENDING)
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M7Rp4TmPPfR0piWdfBqcHweyVl)
 
-Launchable ID: LAUNCHABLE_ID_PENDING
+Launchable ID: env-3M7Rp4TmPPfR0piWdfBqcHweyVl
 
 Current versions: infiniflow/ragflow:v1.0.0, vllm/vllm-openai:v0.32.0-cu129, infiniflow/infinity:v0.7.5-x64-v3, mysql:8.0.40, pgsty/silo:RELEASE.2026-08-06T00-00-00Z, apache/kvrocks:2.16.0, nats:2.14.2
 

@@ -1,10 +1,10 @@
-# Open Video Studio: Wan 2.2 in ComfyUI
+# Wan 2.2 Video Studio (ComfyUI)
 
 Generate video from text or an image with [Wan 2.2](https://github.com/Wan-Video/Wan2.2) on your own GPU. [ComfyUI](https://github.com/comfyanonymous/ComfyUI) comes ready with the Wan 2.2 TI2V-5B weights downloaded, the [ComfyUI-WanVideoWrapper](https://github.com/kijai/ComfyUI-WanVideoWrapper) node pack installed, and prebuilt SageAttention and FlashAttention wheels, so nothing is compiled on your instance.
 
-[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=LAUNCHABLE_ID_PENDING)
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M7SG64BL2IkL3acLixc2Kx25wE)
 
-Launchable ID: LAUNCHABLE_ID_PENDING
+Launchable ID: env-3M7SG64BL2IkL3acLixc2Kx25wE
 
 Current versions: ComfyUI v0.45.0, ComfyUI-WanVideoWrapper a7439db (1.4.8), Wan 2.2 weights from Comfy-Org/Wan_2.2_ComfyUI_Repackaged ee6f4a4, SageAttention 2.2.0, FlashAttention 2.8.3.post2, pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
 

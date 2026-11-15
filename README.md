@@ -11,3 +11,7 @@ Every application folder has its own README that explains what it runs, the GPU 
 | Open WebUI + vLLM | [open-webui-vllm](open-webui-vllm/) |
 | LoRA training (ai-toolkit + kohya_ss) | [lora-training](lora-training/) |
 | LlamaFactory (LlamaBoard) | [llama-factory](llama-factory/) |
+| RAGFlow on your own GPU | [ragflow](ragflow/) |
+| Wan 2.2 Video Studio (ComfyUI) | [open-video-studio](open-video-studio/) |
+| Chatterbox + WhisperX Voice Lab | [voice-lab](voice-lab/) |
+| ComfyUI Pro | [comfyui-pro](comfyui-pro/) |

@@ -2,9 +2,9 @@
 
 Text-to-speech with [Chatterbox](https://github.com/resemble-ai/chatterbox) by Resemble AI and speech-to-text with [WhisperX](https://github.com/m-bain/whisperX) on your own GPU, behind OpenAI-compatible `/v1/audio/speech` and `/v1/audio/transcriptions` endpoints. The speech engines and every model they download are under permissive licences (MIT, BSD or CC-BY-4.0). Wired together with Docker Compose.
 
-[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=LAUNCHABLE_ID)
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M7TTV4QXYErJeINLDl77bsMVyb)
 
-Launchable ID: LAUNCHABLE_ID
+Launchable ID: env-3M7TTV4QXYErJeINLDl77bsMVyb
 
 Current versions: chatterbox-tts 0.1.7 (torch 2.6.0), whisperx 3.8.6 (torch 2.8.0, faster-whisper 1.2.1, ctranslate2 4.8.5, pyannote-audio 4.0.7), python:3.11.18-slim-bookworm
 

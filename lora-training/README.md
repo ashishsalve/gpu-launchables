@@ -1,6 +1,6 @@
 # LoRA training (ai-toolkit + kohya_ss)
 
-[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=LAUNCHABLE_ID_PENDING)
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M77hJCDpHkAGNvOR4xmmgsC1KA)
 
 Train LoRAs for FLUX, Wan 2.2 and Qwen-Image on your own GPU. [AI Toolkit](https://github.com/ostris/ai-toolkit) by Ostris and [Kohya's GUI](https://github.com/bmaltais/kohya_ss) run side by side with Docker Compose, sharing one model cache and one GPU.
 

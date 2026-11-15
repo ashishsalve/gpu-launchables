@@ -63,7 +63,7 @@ services:
           *) echo "unknown BASE_MODEL $$M" >&2; exit 1 ;;
         esac
         if test -n "$$R"; then
-          ( huggingface-cli download "$$M" --revision "$$R" --local-dir "$$W/models/$${M#*/}" \
+          ( hf download "$$M" --revision "$$R" --local-dir "$$W/models/$${M#*/}" \
               && echo "fetch-model: $$M $$R complete" ) >>"$$W/logs/model-fetch.log" 2>&1 &
         fi
         exec llamafactory-cli webui
