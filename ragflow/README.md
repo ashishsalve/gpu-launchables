@@ -6,7 +6,7 @@ Chat with your documents on your own GPU. [RAGFlow](https://github.com/infiniflo
 
 Launchable ID: env-3M7Rp4TmPPfR0piWdfBqcHweyVl
 
-Current versions: infiniflow/ragflow:v1.0.0, vllm/vllm-openai:v0.32.0-cu129, infiniflow/infinity:v0.7.5-x64-v3, mysql:8.0.40, pgsty/silo:RELEASE.2026-08-06T00-00-00Z, apache/kvrocks:2.16.0, nats:2.14.2
+Current versions: infiniflow/ragflow:v1.0.0, vllm/vllm-openai:v0.33.0, infiniflow/infinity:v0.7.5-x64-v3, mysql:8.0.40, pgsty/silo:RELEASE.2026-08-06T00-00-00Z, apache/kvrocks:2.16.0, nats:2.14.2
 
 Last smoke: NOT YET SMOKED
 

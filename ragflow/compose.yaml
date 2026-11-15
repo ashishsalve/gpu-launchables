@@ -23,9 +23,9 @@
 #   apache/kvrocks:2.16.0 - cache, the image upstream uses at v1.0.0 (2.16.0 or
 #     newer is required upstream).
 #   nats:2.14.2 - task queue, the image upstream uses at v1.0.0.
-#   vllm/vllm-openai:v0.32.0-cu129 - vLLM 0.32.0 (GitHub release 2026-10-18), CUDA
-#     12.9 build. Chosen over the CUDA 13 default tag so older host drivers work;
-#     v0.33.0 had no CUDA 12.9 tag on 2026-11-14.
+#   vllm/vllm-openai:v0.33.0 - vLLM release v0.33.0 (pushed 2026-11-02), CUDA 13.0
+#     build. The CUDA 12.9 build failed in the embedding path (missing
+#     libcudart.so.13), so both vLLM services use this image.
 # Models - Hugging Face revisions read on 2026-11-14:
 #   Qwen/Qwen3-8B b968826d9c46dd6066d109eabc6255188de91218
 #   Qwen/Qwen3-4B-Instruct-2507 cdbee75f17c01a7cc42f958dc650907174af0554
@@ -189,7 +189,7 @@ services:
       retries: 30
 
   vllm-embed:
-    image: vllm/vllm-openai:v0.32.0-cu129@sha256:bc0445dac61accbf1c3b17fbb524a71eee0b1b32f55ba45952095e3be8991c3f
+    image: vllm/vllm-openai:v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
     restart: unless-stopped
     shm_size: "2gb"
     environment:
@@ -236,7 +236,7 @@ services:
               capabilities: [gpu]
 
   vllm-chat:
-    image: vllm/vllm-openai:v0.32.0-cu129@sha256:bc0445dac61accbf1c3b17fbb524a71eee0b1b32f55ba45952095e3be8991c3f
+    image: vllm/vllm-openai:v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
     restart: unless-stopped
     shm_size: "8gb"
     depends_on:
