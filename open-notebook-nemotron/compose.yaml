@@ -58,7 +58,9 @@
 #   python:3.13.9-slim - runs the two one-shot helpers (standard library only).
 #
 # GPU memory on one 48 GB GPU: vllm 0.78 and vllm_embed 0.12 of the GPU; the
-# rest is left for Speaches.
+# rest is left for Speaches. Startup order without completion-gated
+# depends_on: vllm waits for vllm_embed health, so the two vLLM processes do
+# not measure GPU memory at the same time.
 #
 # Persistence: everything lives under /home/ubuntu/workspace/open-notebook on
 # the host. It survives Stop and is destroyed by Delete.
@@ -173,32 +175,23 @@ services:
     image: vllm/vllm-openai:v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
     restart: unless-stopped
     ipc: host
+    depends_on:
+      - vllm_embed
     environment:
+      MODEL: "${MODEL:-nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8}"
       HF_TOKEN: "${HF_TOKEN:-}"
       HF_HOME: "/root/.cache/huggingface"
     volumes:
       - /home/ubuntu/workspace/open-notebook/huggingface:/root/.cache/huggingface
-    # Image entrypoint is `vllm serve`.
+    entrypoint: ["/bin/sh", "-c"]
+    # Waits for vllm_embed health first (up to 10 min), so the two vLLM
+    # processes do not measure GPU memory at the same time, then runs
+    # `vllm serve`. --max-num-seqs 16 is an explicit cap instead of the vLLM
+    # default (1024), which can exceed the Mamba cache blocks of Nemotron hybrid
+    # models at startup. --default-chat-template-kwargs turns off the visible
+    # reasoning trace for notes and podcasts.
     command:
-      - "${MODEL:-nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8}"
-      - "--served-model-name"
-      - "${MODEL:-nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8}"
-      - "--host"
-      - "0.0.0.0"
-      - "--port"
-      - "8000"
-      - "--trust-remote-code"
-      - "--max-model-len"
-      - "32768"
-      # Explicit cap instead of the vLLM default (1024), which can exceed the
-      # Mamba cache blocks of Nemotron hybrid models at startup.
-      - "--max-num-seqs"
-      - "16"
-      - "--gpu-memory-utilization"
-      - "0.78"
-      # Answer directly, without a visible reasoning trace, for notes and podcasts.
-      - "--default-chat-template-kwargs"
-      - '{"enable_thinking": false}'
+      - 'i=0; until python3 -c "import urllib.request; urllib.request.urlopen(''http://vllm_embed:8000/health'', timeout=5)" 2>/dev/null || [ $$i -ge 120 ]; do i=$$((i+1)); echo "waiting for the embedding server"; sleep 5; done; exec vllm serve "$$MODEL" --served-model-name "$$MODEL" --host 0.0.0.0 --port 8000 --trust-remote-code --max-model-len 32768 --max-num-seqs 16 --gpu-memory-utilization 0.78 --default-chat-template-kwargs ''{"enable_thinking": false}'''
     ports:
       # Host-local only: reach the API with `brev port-forward`.
       - "127.0.0.1:8000:8000"
@@ -311,7 +304,15 @@ services:
                                          headers=headers)
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 raw = r.read()
-            return json.loads(raw) if raw else None
+            if not raw:
+                return None
+            try:
+                return json.loads(raw)
+            except ValueError:
+                # urlopen raises for non-2xx, so this is a 2xx answer with a
+                # plain-text body (Speaches answers 201 "Model ... already
+                # exists"): treat it as success with no JSON result.
+                return None
 
         def items(res, key):
             if isinstance(res, dict):
