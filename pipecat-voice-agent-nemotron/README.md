@@ -1,10 +1,14 @@
 # Pipecat Voice Agent with Nemotron Speech
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3M8b9S3MTLbdyBbCVcA9ZrJhGAJ)
+
+Launchable ID: env-3M8b9S3MTLbdyBbCVcA9ZrJhGAJ
+
 Talk to a real-time voice agent in your browser, running entirely on one GPU. This environment deploys the [NVIDIA Nemotron Voice Agent blueprint](https://github.com/NVIDIA-AI-Blueprints/nemotron-voice-agent) with its single-GPU profile: Nemotron streaming speech recognition (ASR), the Nemotron 3.5 Lightning language model on [vLLM](https://github.com/vllm-project/vllm), and Magpie text to speech (TTS), connected by a [Pipecat](https://github.com/pipecat-ai/pipecat) speech to speech pipeline with a WebRTC browser app. It needs only a Hugging Face token; no NGC key is required.
 
 Current versions: blueprint v2.3.1 (commit 1f5bd71), vLLM v0.31.0, NeMo-Speech.cpp 0.2.0, coturn 4.5.2 (by digest), uv 0.13.8
 
-Last smoke: not yet run
+Last smoke: 2026-11-15, fresh deploy on one NVIDIA L40S 48GB, including stop and start.
 
 ## What it runs
 
@@ -42,7 +46,7 @@ Models are downloaded from Hugging Face on first start by the blueprint's downlo
 
 ## GPU and disk
 
-This Launchable defaults to one NVIDIA L40S 48GB with 200 GiB of disk. No smoke has been recorded on this configuration yet. The blueprint states that Nemotron 3.5 Lightning needs at least 28 GiB of usable GPU memory, and requires NVIDIA driver 580 or newer and Docker Compose 2.20 or newer; the setup script checks both and stops with a message if either is missing.
+This Launchable defaults to one NVIDIA L40S 48GB with 200 GiB of disk. On this configuration the stack was ready about 22 minutes after deploy, with about 43.5 GB of GPU memory in use. The blueprint states that Nemotron 3.5 Lightning needs at least 28 GiB of usable GPU memory, and requires NVIDIA driver 580 or newer and Docker Compose 2.20 or newer; the setup script checks both and stops with a message if either is missing.
 
 ## Use it
 
