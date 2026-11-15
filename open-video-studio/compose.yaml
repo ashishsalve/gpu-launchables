@@ -74,7 +74,7 @@ services:
 
         if ! dpkg -s git libgl1 libglib2.0-0 >/dev/null 2>&1; then
           apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends git libgl1 libglib2.0-0 ca-certificates
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends git libgl1 libglib2.0-0 ca-certificates gcc libc6-dev
           apt-get clean
         fi
 
