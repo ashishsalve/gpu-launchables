@@ -1,0 +1,116 @@
+# NVIDIA Nemotron chat with Open WebUI + vLLM on one GPU (Docker Compose).
+# Launch parameters:
+#   MODEL    - Hugging Face model id vLLM serves (default
+#              nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4).
+#   HF_TOKEN - Hugging Face read token, no default; optional (both models
+#              are ungated) but avoids anonymous download rate limits.
+# Parameters are read by the first `docker compose up` and kept in each
+# container's configuration, so stop/start needs no re-entry. HF_TOKEN reaches
+# only the vllm service environment, never a command, image name or label.
+#
+# Pinned images:
+#   vllm/vllm-openai:v0.27.1 - the vLLM release named on the Nemotron 3.5
+#     Lightning model card (released 2026-08-11). It registers the NemotronH
+#     and Qwen3 architectures and the nemotron_v3 and qwen3 reasoning
+#     parsers this file uses.
+#   ghcr.io/open-webui/open-webui:v0.13.3 - Open WebUI release v0.13.3
+#     (2026-11-08).
+#   Models are downloaded from Hugging Face on first start.
+#
+# Serving flags per model follow each model card:
+#   Nemotron 3.5 Lightning NVFP4 - the card's non-Blackwell recipe (humming
+#     MoE and linear backends, modelopt_fp4), reasoning parser nemotron_v3,
+#     tool parser qwen3_coder.
+#   Qwen3-8B                     - reasoning parser qwen3, tool parser hermes.
+# Reasoning is on by default; send
+#   "chat_template_kwargs": {"enable_thinking": false}
+# in a request to answer without the reasoning trace.
+#
+# Persistence: the Hugging Face cache and Open WebUI data live under
+# /home/ubuntu/workspace on the host, which survives stop and is destroyed on delete.
+
+name: nemotron-chat
+
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967
+    restart: unless-stopped
+    ipc: host
+    environment:
+      MODEL: "${MODEL:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+      # Start script: picks the vLLM flags for the chosen MODEL, then execs
+      # `vllm serve`. It reads only MODEL and prints no environment values.
+      VLLM_LAUNCH_SCRIPT: |
+        set -euo pipefail
+        case "$$MODEL" in
+          nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4)
+            export VLLM_HUMMING_MOE_GEMM_TYPE=indexed
+            set -- --quantization modelopt_fp4 --moe-backend humming --linear-backend humming \
+              --mamba-backend flashinfer --mamba-cache-mode align --mamba-ssu-algorithm simple \
+              --enable-prefix-caching --max-model-len 65536 \
+              --reasoning-parser nemotron_v3 --tool-call-parser qwen3_coder --enable-auto-tool-choice
+            ;;
+          Qwen/Qwen3-8B)
+            set -- --max-model-len 32768 \
+              --reasoning-parser qwen3 --tool-call-parser hermes --enable-auto-tool-choice
+            ;;
+          *)
+            echo "MODEL is not one of the supported choices" >&2
+            exit 1
+            ;;
+        esac
+        # Explicit --max-num-seqs for every model: the vLLM default (1024) can
+        # exceed the Mamba cache blocks of Nemotron hybrid models at startup.
+        exec vllm serve "$$MODEL" --served-model-name "$$MODEL" \
+          --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.90 \
+          --max-num-seqs 16 "$$@"
+    volumes:
+      - /home/ubuntu/workspace/huggingface:/root/.cache/huggingface
+    # Replaces the image entrypoint (`vllm serve`) with the start script above.
+    entrypoint: ['/bin/bash', '-c', 'eval "$$VLLM_LAUNCH_SCRIPT"']
+    ports:
+      # Host-local only: reach the API with `brev port-forward`, never a public port.
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      # The vllm-openai image ships no curl; python3 is present.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1800s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.13.3
+    restart: unless-stopped
+    depends_on:
+      vllm:
+        # Start the UI at once; the model appears when vLLM finishes loading.
+        condition: service_started
+    environment:
+      ENABLE_OLLAMA_API: "false"
+      OPENAI_API_BASE_URL: "http://vllm:8000/v1"
+      DEFAULT_MODELS: "${MODEL:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}"
+      # Sampling recommended on the Nemotron 3.5 model cards; prompt-based
+      # tool calling so every model answers.
+      DEFAULT_MODEL_PARAMS: '{"temperature":1.0,"top_p":0.95,"function_calling":"legacy"}'
+      TOOL_SERVER_CONNECTIONS: "[]"
+    volumes:
+      - /home/ubuntu/workspace/open-webui:/app/backend/data
+    ports:
+      # Served to deployers only through the Brev Secure Link "chat-with-nemotron".
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s

@@ -1,0 +1,193 @@
+# Nemotron Omni Multimodal Studio (Docker Compose).
+# Launch parameters:
+#   MODEL    - Hugging Face model id vLLM serves (default
+#              nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8).
+#   HF_TOKEN - Hugging Face read token, no default; optional (both models are
+#              downloadable without one).
+# Parameters are read by the first `docker compose up` and kept in each
+# container's configuration, so stop/start needs no re-entry. HF_TOKEN reaches
+# only the vllm service environment, never a command, image name or label.
+#
+# Pinned versions:
+#   vllm/vllm-openai:v0.33.0 - vLLM release v0.33.0 (2026-11-01), pinned by
+#     index digest sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
+#     (read 2026-11-15) so the image cannot change under the tag. The
+#     Nemotron 3 Nano Omni model card requires vLLM 0.20.0 or newer. Built on
+#     CUDA 13.0, so the host NVIDIA driver must support CUDA 13.
+#   Audio decoding packages for vLLM (the model card asks for vllm[audio],
+#     whose packages are not in the image): av 19.0.2, soundfile 0.14.0,
+#     soxr 1.1.0, scipy 1.18.1. Installed once per container, then reused.
+#   python:3.12.12-slim-bookworm - Python base for the Studio web app.
+#   gradio 6.32.0 (2026-11-12) - web UI library for the Studio app.
+#   Models are downloaded from Hugging Face on first start.
+#
+# GPU memory: the model card lists a 33 GB download for the FP8 model and
+# 1x L40S 48GB as the minimum GPU. --max-num-seqs 8 and --max-model-len bound
+# the cache: 65536 for Nemotron 3 Nano Omni, 32768 for Qwen2.5-Omni-7B (its
+# max_position_embeddings is 32768, so vLLM rejects a longer context).
+#
+# Persistence: the Hugging Face cache and uploaded media live under
+# /home/ubuntu/workspace on the host, which survives stop and is destroyed on delete.
+
+name: nemotron-omni-studio
+
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
+    restart: unless-stopped
+    ipc: host
+    environment:
+      MODEL: "${MODEL:-nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      # Start script: add the pinned audio packages (skipped when already
+      # present in this container), then exec vLLM.
+      VLLM_START: |
+        set -euo pipefail
+        python3 -c 'import av, soundfile, soxr, scipy' 2>/dev/null || python3 -m pip install --no-cache-dir av==19.0.2 soundfile==0.14.0 soxr==1.1.0 scipy==1.18.1
+        case "$$MODEL" in Qwen/Qwen2.5-Omni-7B) MML=32768 ;; *) MML=65536 ;; esac
+        exec vllm serve "$$MODEL" --served-model-name "$$MODEL" --host 0.0.0.0 --port 8000 --trust-remote-code --max-model-len "$$MML" --max-num-seqs 8 --gpu-memory-utilization 0.90 --allowed-local-media-path /media --media-io-kwargs '{"video": {"fps": 2, "num_frames": 128}}' --limit-mm-per-prompt '{"image": 1, "video": 1, "audio": 1}'
+    volumes:
+      - /home/ubuntu/workspace/huggingface:/root/.cache/huggingface
+      # Uploads from the Studio app; vLLM reads them as file:///media/... URLs.
+      - /home/ubuntu/workspace/media:/media
+    # The image entrypoint is `vllm serve`; replace it with a shell that runs
+    # VLLM_START from this service's environment.
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - eval "$$VLLM_START"
+    ports:
+      # Host-local only: reach the API with `brev port-forward`, never a public port.
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      # The vllm-openai image ships no curl; python3 is present.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1800s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  studio:
+    image: python:3.12.12-slim-bookworm
+    restart: unless-stopped
+    depends_on:
+      vllm:
+        # Start the UI at once; requests succeed once vLLM has loaded the model.
+        condition: service_started
+    environment:
+      MODEL: "${MODEL:-nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8}"
+      VLLM_BASE_URL: "http://vllm:8000/v1"
+      MEDIA_DIR: "/media"
+      GRADIO_ANALYTICS_ENABLED: "False"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      APP_SOURCE: |
+        import json
+        import os
+        import shutil
+        import urllib.error
+        import urllib.request
+        import uuid
+
+        import gradio as gr
+
+        BASE = os.environ.get("VLLM_BASE_URL", "http://vllm:8000/v1")
+        MODEL = os.environ["MODEL"]
+        MEDIA = os.environ.get("MEDIA_DIR", "/media")
+
+        VIDEO_PROMPT = ("Summarize this video in a short paragraph. Then give a timestamped "
+                        "outline of the key events, one per line, formatted mm:ss - event.")
+        AUDIO_PROMPT = ("Transcribe this audio. Then summarize it in up to five bullet points.")
+        IMAGE_PROMPT = "Describe this image in detail."
+
+
+        def stage(path):
+            if not path:
+                raise gr.Error("Upload a file first.")
+            ext = os.path.splitext(path)[1].lower()
+            folder = os.path.join(MEDIA, "uploads")
+            os.makedirs(folder, exist_ok=True)
+            dest = os.path.join(folder, uuid.uuid4().hex + ext)
+            shutil.copyfile(path, dest)
+            return "file://" + dest
+
+
+        def ask(media_part, question, max_tokens):
+            body = {
+                "model": MODEL,
+                "messages": [{"role": "user", "content": [media_part, {"type": "text", "text": question}]}],
+                "max_tokens": max_tokens,
+                "temperature": 0.2,
+                "chat_template_kwargs": {"enable_thinking": False},
+            }
+            req = urllib.request.Request(BASE + "/chat/completions", data=json.dumps(body).encode(),
+                                         headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=1800) as resp:
+                    out = json.load(resp)
+            except urllib.error.HTTPError as err:
+                detail = err.read().decode(errors="replace")[:500]
+                raise gr.Error("Model server returned " + str(err.code) + ": " + detail)
+            except OSError as err:
+                raise gr.Error("The model server is not ready yet (" + str(err) + "). "
+                               "The first start downloads the model; try again in a few minutes.")
+            return out["choices"][0]["message"].get("content") or ""
+
+
+        def image_qa(path, question):
+            part = {"type": "image_url", "image_url": {"url": stage(path)}}
+            return ask(part, question or IMAGE_PROMPT, 1024)
+
+
+        def video_summary(path, question):
+            part = {"type": "video_url", "video_url": {"url": stage(path)}}
+            return ask(part, question or VIDEO_PROMPT, 2048)
+
+
+        def audio_summary(path, question):
+            part = {"type": "audio_url", "audio_url": {"url": stage(path)}}
+            return ask(part, question or AUDIO_PROMPT, 4096)
+
+
+        with gr.Blocks(title="Nemotron Omni Studio") as demo:
+            gr.Markdown("# Nemotron Omni Studio\nModel: `" + MODEL + "`. Upload an image, a video or an audio clip.")
+            with gr.Tab("Image Q&A"):
+                img = gr.Image(type="filepath", label="Image (JPEG or PNG)")
+                img_q = gr.Textbox(label="Question", placeholder=IMAGE_PROMPT)
+                img_out = gr.Markdown()
+                gr.Button("Ask").click(image_qa, [img, img_q], img_out)
+            with gr.Tab("Video summary"):
+                vid = gr.File(type="filepath", file_types=[".mp4"], label="Video (MP4)")
+                vid_q = gr.Textbox(label="Question (optional)", placeholder=VIDEO_PROMPT)
+                vid_out = gr.Markdown()
+                gr.Button("Summarize with timestamps").click(video_summary, [vid, vid_q], vid_out)
+            with gr.Tab("Audio transcript"):
+                aud = gr.File(type="filepath", file_types=[".wav", ".mp3"], label="Audio (WAV or MP3)")
+                aud_q = gr.Textbox(label="Question (optional)", placeholder=AUDIO_PROMPT)
+                aud_out = gr.Markdown()
+                gr.Button("Transcribe and summarize").click(audio_summary, [aud, aud_q], aud_out)
+
+        demo.queue(default_concurrency_limit=2).launch(server_name="0.0.0.0", server_port=7860)
+    volumes:
+      - /home/ubuntu/workspace/media:/media
+    # Install the pinned Gradio once per container, then run the app above.
+    command:
+      - /bin/sh
+      - -c
+      - python -c 'import gradio' 2>/dev/null || pip install --no-cache-dir gradio==6.32.0 && exec python -c "$$APP_SOURCE"
+    ports:
+      # Served to deployers only through the Brev Secure Link "open-omni-studio".
+      - "7860:7860"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7860/', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 300s

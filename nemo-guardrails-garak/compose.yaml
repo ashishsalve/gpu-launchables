@@ -1,0 +1,307 @@
+# NeMo Guardrails + garak LLM Security Lab (Docker Compose, one GPU).
+#
+# Services:
+#   vllm-safety - vLLM serving nvidia/Nemotron-3.5-Content-Safety (the rail model).
+#   vllm-chat   - vLLM serving the chat model (CHAT_MODEL); starts after vllm-safety
+#                 is up so the two processes do not size GPU memory at the same time.
+#   guardrails  - NeMo Guardrails server: content safety input and output rails in
+#                 front of vllm-chat, OpenAI-compatible API on 127.0.0.1:8000.
+#   open-webui  - chat UI on 8080 with two connections, prefix "raw" (vllm-chat
+#                 directly) and prefix "guarded" (through NeMo Guardrails).
+#   garak       - runs a fixed garak probe set once against both endpoints, then
+#                 serves the reports (prefix "raw-model" or "guarded") on 8888.
+#
+# Launch parameters:
+#   CHAT_MODEL - chat model id (default nvidia/NVIDIA-Nemotron-Nano-9B-v2).
+#   HF_TOKEN   - optional Hugging Face read token, no default. It reaches only the
+#                two vllm services' environment, never a command, image or label.
+# Parameters are read by the first `docker compose up` and kept in each
+# container's configuration, so stop/start needs no re-entry.
+#
+# Pinned versions (each read from the upstream release page on 2026-11-15):
+#   vllm/vllm-openai:v0.20.2 - the newest vLLM inside the range the
+#     Nemotron-3.5-Content-Safety model card names (vllm >= 0.11.0, <= 0.20.2);
+#     Nemotron Nano 9B v2 needs >= 0.10.1. Pinned by digest.
+#   nemoguardrails[server]==0.24.1 - NeMo Guardrails release v0.24.1
+#     (2026-09-16), which parses Nemotron 3.5 Content Safety responses; its
+#     [server] extra includes openai>=1.0.0,<3.0.0 (PyPI metadata).
+#   garak==0.17.1 - garak release v0.17.1 (2026-10-16).
+#   python:3.12.16-slim-bookworm - Python base for the guardrails and garak
+#     services (both packages support Python 3.12).
+#   ghcr.io/open-webui/open-webui:v0.13.3 - Open WebUI release v0.13.3.
+#
+# GPU memory on one 48 GB GPU: vllm-chat 0.55 and vllm-safety 0.30 of the GPU.
+#
+# Persistence: everything lives under /home/ubuntu/workspace on the host, which survives
+# stop and is destroyed on delete.
+
+name: guardrails-garak
+
+services:
+  vllm-safety:
+    image: vllm/vllm-openai:v0.20.2@sha256:70a098d90dbab428a001d9e852fc0fc8d67da5beb03e7851a22247653bf35923
+    restart: unless-stopped
+    ipc: host
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+    volumes:
+      - /home/ubuntu/workspace/huggingface:/root/.cache/huggingface
+    # Image entrypoint is `vllm serve`.
+    command:
+      - "nvidia/Nemotron-3.5-Content-Safety"
+      - "--served-model-name"
+      - "nvidia/nemotron-3.5-content-safety"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--max-model-len"
+      - "8192"
+      - "--gpu-memory-utilization"
+      - "0.30"
+      # Explicit cap instead of the vLLM default (1024) so both vLLM servers
+      # keep a small, predictable footprint on the one shared GPU.
+      - "--max-num-seqs"
+      - "8"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1800s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  vllm-chat:
+    image: vllm/vllm-openai:v0.20.2@sha256:70a098d90dbab428a001d9e852fc0fc8d67da5beb03e7851a22247653bf35923
+    restart: unless-stopped
+    ipc: host
+    depends_on:
+      vllm-safety:
+        condition: service_started
+    environment:
+      CHAT_MODEL: "${CHAT_MODEL:-nvidia/NVIDIA-Nemotron-Nano-9B-v2}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+    volumes:
+      - /home/ubuntu/workspace/huggingface:/root/.cache/huggingface
+    # Waits up to 30 minutes for vllm-safety so GPU memory is sized one process
+    # at a time. --trust-remote-code and --mamba_ssm_cache_dtype float32 for Nemotron Nano 9B v2 come from its model card.
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        for i in $$(seq 1 180); do
+          python3 -c "import urllib.request; urllib.request.urlopen('http://vllm-safety:8000/health', timeout=5)" 2>/dev/null && break
+          sleep 10
+        done
+        EXTRA=""
+        if [ "$$CHAT_MODEL" = "nvidia/NVIDIA-Nemotron-Nano-9B-v2" ]; then
+          # nemotron_v3 (a DeepSeek-R1-style parser) moves the reasoning text
+          # and its closing </think> out of the answer.
+          EXTRA="--trust-remote-code --mamba_ssm_cache_dtype float32 --reasoning-parser nemotron_v3"
+        fi
+        # Explicit --max-num-seqs for every model: the vLLM default (1024) can
+        # exceed the Mamba cache blocks of Nemotron hybrid models at startup.
+        exec vllm serve "$$CHAT_MODEL" --served-model-name "$$CHAT_MODEL" \
+          --host 0.0.0.0 --port 8000 --max-model-len 16384 \
+          --gpu-memory-utilization 0.55 --max-num-seqs 8 $$EXTRA
+    ports:
+      # Host-local only: reach the raw model API with `brev port-forward`.
+      - "127.0.0.1:8001:8000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 2400s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  guardrails:
+    image: python:3.12.16-slim-bookworm
+    restart: unless-stopped
+    depends_on:
+      vllm-chat:
+        condition: service_started
+    environment:
+      # vLLM runs without an API key; the client only needs a non-empty value.
+      OPENAI_API_KEY: "none"
+      NEMO_GUARDRAILS_DISABLE_CHAT_UI: "true"
+      CHAT_MODEL: "${CHAT_MODEL:-nvidia/NVIDIA-Nemotron-Nano-9B-v2}"
+      # The guardrails server proxies /v1/models to the main model here.
+      MAIN_MODEL_BASE_URL: "http://vllm-chat:8000/v1"
+    volumes:
+      - /home/ubuntu/workspace/guardrails/venv:/venv
+      - /home/ubuntu/workspace/guardrails/cache:/root/.cache
+    # Writes the guardrails config (config.yml, prompts.yml) into the container,
+    # installs the pinned NeMo Guardrails into a persistent venv once, then serves.
+    # The prompts follow the NeMo Guardrails v0.24.1 example
+    # nemotron-3.5-content-safety: the model's chat template supplies the safety
+    # policy and output format. The [server] extra brings the openai client used
+    # natively by engine: openai; 0.24.1 defines no [openai] extra and needs no
+    # langchain-openai.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mkdir -p /config/guarded
+        cat > /config/guarded/config.yml <<'EOF'
+        models:
+          - type: main
+            engine: openai
+            model: @CHAT_MODEL@
+            parameters:
+              base_url: http://vllm-chat:8000/v1
+          - type: content_safety
+            engine: openai
+            model: nvidia/nemotron-3.5-content-safety
+            parameters:
+              base_url: http://vllm-safety:8000/v1
+              chat_template_kwargs:
+                enable_thinking: false
+                request_categories: "/categories"
+        rails:
+          input:
+            flows:
+              - content safety check input $$model=content_safety
+          output:
+            flows:
+              - content safety check output $$model=content_safety
+            streaming:
+              enabled: true
+              chunk_size: 200
+              context_size: 50
+        EOF
+        sed -i "s|@CHAT_MODEL@|$$CHAT_MODEL|" /config/guarded/config.yml
+        cat > /config/guarded/prompts.yml <<'EOF'
+        prompts:
+          - task: content_safety_check_input $$model=content_safety
+            messages:
+              - type: user
+                content: "{{ user_input }}"
+            output_parser: nemotron_content_safety_parse_prompt_safety
+            max_tokens: 100
+            max_length: 128000
+          - task: content_safety_check_output $$model=content_safety
+            messages:
+              - type: user
+                content: "{{ user_input }}"
+              - type: assistant
+                content: "{{ bot_response }}"
+            output_parser: nemotron_content_safety_parse_response_safety
+            max_tokens: 100
+            max_length: 128000
+        EOF
+        PIN="nemoguardrails[server]==0.24.1"
+        if [ "$$(cat /venv/.pinned 2>/dev/null)" != "$$PIN" ]; then
+          python -m venv --clear /venv
+          /venv/bin/pip install --no-cache-dir "$$PIN"
+          printf '%s\n' "$$PIN" > /venv/.pinned
+        fi
+        exec /venv/bin/nemoguardrails server --config /config --default-config-id guarded --port 8000 --disable-chat-ui
+    ports:
+      # Host-local only: reach the guarded API with `brev port-forward`.
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 900s
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.13.3
+    restart: unless-stopped
+    depends_on:
+      guardrails:
+        # Start the UI at once; the models appear once vLLM has loaded them.
+        condition: service_started
+    environment:
+      ENABLE_OLLAMA_API: "false"
+      OPENAI_API_BASE_URLS: "http://vllm-chat:8000/v1;http://guardrails:8000/v1"
+      OPENAI_API_KEYS: "none;none"
+      OPENAI_API_CONFIGS: '{"0":{"enable":true,"prefix_id":"raw"},"1":{"enable":true,"prefix_id":"guarded"}}'
+      DEFAULT_MODEL_PARAMS: '{"function_calling":"legacy"}'
+      TOOL_SERVER_CONNECTIONS: "[]"
+    volumes:
+      - /home/ubuntu/workspace/open-webui:/app/backend/data
+    ports:
+      # Served to deployers only through the Brev Secure Link "compare-raw-vs-guarded".
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
+
+  garak:
+    image: python:3.12.16-slim-bookworm
+    restart: unless-stopped
+    depends_on:
+      guardrails:
+        condition: service_started
+    environment:
+      CHAT_MODEL: "${CHAT_MODEL:-nvidia/NVIDIA-Nemotron-Nano-9B-v2}"
+      # vLLM and NeMo Guardrails run without an API key; garak needs a non-empty value.
+      OPENAICOMPATIBLE_API_KEY: "none"
+      XDG_DATA_HOME: "/workspace/garak/data"
+      XDG_CACHE_HOME: "/workspace/garak/cache"
+      XDG_CONFIG_HOME: "/workspace/garak/config"
+      # Fixed probe set: DAN-style jailbreaks and prompt-injection hijacks.
+      GARAK_SPEC: "probes.dan.Dan_11_0,probes.dan.DAN_Jailbreak,probes.dan.DanInTheWild,probes.promptinject.HijackHateHumans,probes.promptinject.HijackKillHumans"
+    volumes:
+      - /home/ubuntu/workspace/garak:/workspace/garak
+    # Installs the pinned garak once, scans the raw and the guarded endpoint once
+    # per instance, then serves the reports directory on 8888.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        PIN="garak==0.17.1"
+        VENV=/workspace/garak/venv
+        if [ "$$(cat $$VENV/.pinned 2>/dev/null)" != "$$PIN" ]; then
+          python -m venv --clear "$$VENV"
+          "$$VENV/bin/pip" install --no-cache-dir "$$PIN"
+          printf '%s\n' "$$PIN" > "$$VENV/.pinned"
+        fi
+        REPORTS=/workspace/garak/data/garak/garak_runs
+        mkdir -p "$$REPORTS"
+        wait_for() {
+          for i in $$(seq 1 240); do
+            python -c "import urllib.request; urllib.request.urlopen('$$1', timeout=5)" 2>/dev/null && return 0
+            sleep 15
+          done
+          return 1
+        }
+        scan() {
+          "$$VENV/bin/garak" --target_type openai.OpenAICompatible \
+            --target_name "$$CHAT_MODEL" \
+            --generator_options "{\"openai\":{\"OpenAICompatible\":{\"uri\":\"$$2\",\"stop\":[]}}}" \
+            --spec "$$GARAK_SPEC" --generations 1 --parallel_attempts 8 \
+            --report_prefix "$$1" || echo "garak scan $$1 exited non-zero"
+        }
+        # Waits up to 60 minutes per endpoint. /v1/health is the NeMo Guardrails
+        # 0.24.1 server liveness route (nemoguardrails/server/api.py, also /healthz).
+        if [ ! -f /workspace/garak/.scanned ]; then
+          wait_for http://vllm-chat:8000/health || { echo "garak: vllm-chat /health not ready after 60 min, exiting"; exit 1; }
+          wait_for http://guardrails:8000/v1/health || { echo "garak: guardrails /v1/health not ready after 60 min, exiting"; exit 1; }
+          scan raw-model http://vllm-chat:8000/v1/
+          scan guarded http://guardrails:8000/v1/
+          touch /workspace/garak/.scanned
+        fi
+        exec python -m http.server 8888 --directory "$$REPORTS"
+    ports:
+      # Served to deployers only through the Brev Secure Link "garak-reports".
+      - "8888:8888"

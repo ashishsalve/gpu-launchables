@@ -1,0 +1,110 @@
+# OpenHands + Nemotron coding agent on one GPU (Docker Compose).
+# Launch parameters:
+#   MODEL         - Hugging Face model id vLLM serves (default
+#                   nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4).
+#   MAX_MODEL_LEN - context window in tokens (default 65536). OpenHands needs
+#                   at least 22000; 32768 or more is recommended.
+#   HF_TOKEN      - optional Hugging Face read token, no default. Both models
+#                   are public; a token only lifts anonymous download limits.
+# Parameters are read by the first `docker compose up` and kept in each
+# container's configuration, so stop/start needs no re-entry. HF_TOKEN reaches
+# only the vllm service environment, never a command, image name or label.
+#
+# Pinned images:
+#   vllm/vllm-openai:v0.27.1 (+ digest) - the vLLM release the Nemotron 3.5
+#     Lightning model card names for this checkpoint.
+#   ghcr.io/openhands/agent-canvas:1.40.0 - OpenHands release 1.40.0
+#     (2026-11-12), the image named in the OpenHands README.
+#   Models are downloaded from Hugging Face on first start.
+#
+# vLLM serves the model under the fixed name "coder" on the compose network
+# (http://vllm:8000/v1). Its port is published on the instance loopback only
+# (127.0.0.1:8001); reach it with `brev port-forward`, never a public port.
+# Nemotron 3.5 Lightning uses the model card's W4A16 serving flags and the
+# nemotron_v3 reasoning parser; Qwen3-Coder uses plain serving. Both use the
+# qwen3_coder tool-call parser.
+#
+# OpenHands runs the agent inside its own container (the default local
+# runtime): no Docker socket and no privileged mode are granted.
+#
+# Persistence: the Hugging Face cache, OpenHands settings and your projects
+# live under /home/ubuntu/workspace on the host, which survives stop and is destroyed
+# on delete.
+
+name: openhands-nemotron
+
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967
+    restart: unless-stopped
+    ipc: host
+    environment:
+      MODEL: "${MODEL:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}"
+      MAX_MODEL_LEN: "${MAX_MODEL_LEN:-65536}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+      # Disable DeepGEMM so FP8 MoE models use vLLM's Triton/CUTLASS kernels.
+      VLLM_USE_DEEP_GEMM: "0"
+    volumes:
+      - /home/ubuntu/workspace/huggingface:/root/.cache/huggingface
+    entrypoint:
+      - /bin/bash
+      - -c
+      # Per-model flags: Nemotron 3.5 Lightning gets the model card's W4A16
+      # recipe and reasoning parser; any other model is served plainly.
+      # Every model gets an explicit --max-num-seqs: the vLLM default (1024)
+      # can exceed the Mamba cache blocks of Nemotron hybrid models at startup.
+      - 'set -euo pipefail; case "$$MODEL" in nvidia/NVIDIA-Nemotron-3.5-Lightning-*) export VLLM_HUMMING_MOE_GEMM_TYPE=indexed; set -- --quantization modelopt_fp4 --moe-backend humming --linear-backend humming --mamba-backend flashinfer --mamba-cache-mode align --mamba-ssu-algorithm simple --reasoning-parser nemotron_v3 ;; *) set -- ;; esac; exec vllm serve "$$MODEL" --served-model-name coder --host 0.0.0.0 --port 8000 --max-model-len "$$MAX_MODEL_LEN" --gpu-memory-utilization 0.90 --max-num-seqs 16 --enable-prefix-caching --enable-auto-tool-choice --tool-call-parser qwen3_coder "$$@"'
+    ports:
+      # Instance loopback only: reach the API with `brev port-forward`.
+      - "127.0.0.1:8001:8000"
+    healthcheck:
+      # The vllm-openai image ships python3; curl is not relied on.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1800s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # One-shot: OpenHands runs as uid 10001, which must be able to read and
+  # write its state and project folders (OpenHands README at v1.40.0). Docker
+  # creates missing bind-mount folders owned by root, so this hands them to
+  # uid 10001 first. It reuses the vLLM image above, so it adds no image.
+  workspace-init:
+    image: vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /w/openhands /w/projects && chown 10001:10001 /w/openhands /w/projects && chmod 700 /w/openhands && chmod 775 /w/projects"]
+    volumes:
+      - /home/ubuntu/workspace:/w
+
+  openhands:
+    image: ghcr.io/openhands/agent-canvas:1.40.0
+    restart: unless-stopped
+    depends_on:
+      vllm:
+        # Start the UI at once; the model answers once vLLM has loaded it.
+        condition: service_started
+      workspace-init:
+        condition: service_started
+    # Waits until workspace-init has made both folders writable, then runs the
+    # image's own entrypoint, unchanged: ENTRYPOINT ["tini", "--",
+    # "/opt/agent-canvas/entrypoint.sh"] with no CMD, per
+    # https://github.com/OpenHands/OpenHands/blob/v1.40.0/docker/Dockerfile
+    entrypoint: ["/bin/sh", "-c", "echo waiting for workspace-init; until [ -w /home/openhands/.openhands ] && [ -w /projects ]; do sleep 1; done; exec tini -- /opt/agent-canvas/entrypoint.sh"]
+    # AGENT_CANVAS_ALLOW_LAN_SESSION_KEY is deliberately not set. Upstream
+    # enables session-key injection only when the port is published on
+    # 127.0.0.1 and says to omit it on a LAN or public interface. Without it
+    # the UI asks for the OpenHands API key; see the README for how to read it.
+    volumes:
+      - /home/ubuntu/workspace/openhands:/home/openhands/.openhands
+      - /home/ubuntu/workspace/projects:/projects
+    ports:
+      # Served to deployers only through the Brev Secure Link "open-openhands".
+      - "8000:8000"

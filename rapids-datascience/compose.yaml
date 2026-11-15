@@ -1,0 +1,70 @@
+# RAPIDS data science in JupyterLab on one NVIDIA GPU (Docker Compose).
+# No launch parameters and no secrets.
+#
+# Pinned image:
+#   rapidsai/notebooks:26.10-cuda12-py3.12 - RAPIDS 26.10 release image
+#     (pushed 2026-10-28), CUDA 12 build, Python 3.12. Pinned by tag and by
+#     its multi-arch index digest so the image cannot change under this file.
+#     The CUDA 12 build runs on NVIDIA drivers >= 525.60.13.
+#   Includes RAPIDS (cuDF, cuDF-Polars, cuML, cuGraph, Dask-CUDA), XGBoost,
+#   JupyterLab 4 with the Dask and GPU dashboard extensions.
+#   xgboost=3.4.2=cuda129_pyh5c66634_0 - the CUDA build of XGBoost. The
+#     image entrypoint installs it from EXTRA_CONDA_PACKAGES at every
+#     container start (needs internet, about 150 MB), so XGBoost can train
+#     on the GPU with device="cuda".
+#
+# Access: open JupyterLab through the authenticated Brev Secure Link for port
+# 8888. JupyterLab also requires its own token, generated on first start and
+# stored at /home/ubuntu/workspace/rapids/.jupyter-token (readable by root
+# only). Do not open port 8888 or 8787 to the internet.
+#
+# Persistence: your notebooks and data in the JupyterLab folder "workspace"
+# are stored on the host at /home/ubuntu/workspace/rapids, which survives
+# stop and is destroyed on delete.
+
+name: rapids-datascience
+
+services:
+  jupyter:
+    image: rapidsai/notebooks:26.10-cuda12-py3.12@sha256:3f7e9bd6335860a41ae86802516a45eccc9568007b7bb3efef8cf359ab1f7321
+    restart: unless-stopped
+    # Root so JupyterLab can write to the host workspace folder (created by
+    # Docker as root); the image entrypoint activates the RAPIDS conda env.
+    user: root
+    environment:
+      # Read by the image entrypoint: replaces the CPU-only XGBoost with the
+      # pinned CUDA build at container start.
+      EXTRA_CONDA_PACKAGES: "xgboost=3.4.2=cuda129_pyh5c66634_0"
+    shm_size: "1gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    # On first start, generate a random JupyterLab token into the workspace
+    # (owner-only file mode) and reuse it after every restart. JupyterLab reads
+    # it from JUPYTER_TOKEN; the token is never written to the log.
+    command:
+      - "bash"
+      - "-c"
+      - 'umask 077; T=/home/rapids/notebooks/workspace/.jupyter-token; [ -s "$$T" ] || python -c "import secrets; print(secrets.token_hex(24))" > "$$T"; JUPYTER_TOKEN="$$(cat "$$T")"; export JUPYTER_TOKEN; exec jupyter-lab --notebook-dir=/home/rapids/notebooks --ip=0.0.0.0 --port=8888 --no-browser --allow-root'
+    volumes:
+      - /home/ubuntu/workspace/rapids:/home/rapids/notebooks/workspace
+    ports:
+      # Served to deployers only through the Brev Secure Link "open-jupyterlab".
+      - "8888:8888"
+      # Dask dashboard, available after you start a Dask cluster in a notebook;
+      # served only through the Brev Secure Link "dask-dashboard".
+      - "8787:8787"
+    healthcheck:
+      # /api answers without a token; it proves the server is up.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8888/api', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

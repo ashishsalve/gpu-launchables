@@ -1,0 +1,403 @@
+# Open Notebook on Nemotron - a private research notebook with document chat
+# and podcast generation, served entirely on one GPU. Docker Compose.
+#
+# Services:
+#   open_notebook - Open Notebook web app (port 8502) and its REST API (5055,
+#                   reached only inside this stack; the web app proxies /api).
+#   surrealdb     - Open Notebook's database. No port is published, so it is
+#                   reachable only from the other services in this stack.
+#   vllm          - vLLM serving the chat model chosen by MODEL (OpenAI API).
+#   vllm_embed    - vLLM serving the NVIDIA Nemotron 3.5 Embed 1B embedding model.
+#   speaches      - Speaches: OpenAI-compatible text-to-speech (Kokoro) and
+#                   speech-to-text (faster-whisper) for podcasts and audio.
+#   init          - one-shot: creates the data folders, a random encryption
+#                   key for Open Notebook's stored settings and a random
+#                   database password (first boot only, root-only files).
+#   tools         - sidecar: copies a static BusyBox binary for the
+#                   SurrealDB start wrapper, then idles; its health check
+#                   gates surrealdb.
+#   seed          - one-shot: downloads the speech models and registers every
+#                   local model in Open Notebook through its REST API, sets the
+#                   default models and adds a two-voice podcast profile.
+#
+# Launch parameters:
+#   MODEL    - chat model vLLM serves (default
+#              nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8; option Qwen/Qwen3-8B).
+#   HF_TOKEN - optional Hugging Face read token, no default. No model here is
+#              gated; a token only raises download rate limits. It reaches the
+#              download services through their environment only.
+#   OPEN_NOTEBOOK_PASSWORD - optional password for the Open Notebook web app
+#              and API, no default. Empty leaves Open Notebook's own password
+#              off. The seed service sends it to the API when it is set.
+# Brev passes parameters to the first `docker compose up` only and writes no
+# .env. Values are kept in each container's configuration, so Stop and Start
+# need no re-entry.
+#
+# Pinned images (each tag read from its registry on 2026-11-15; Brev
+# fresh-deploy smoke not yet run):
+#   lfnovo/open_notebook:1.15.1 - Open Notebook release v1.15.1 (2026-11-04,
+#     security release); same digest as upstream's v1-latest that day.
+#   surrealdb/surrealdb:v2.7.0 (release digest pinned, read 2026-11-15) -
+#     newest SurrealDB 2.x release (2026-09-23), the major version Open
+#     Notebook v1.15.1 ships with (upstream uses v2). The release image has no
+#     shell, so a static BusyBox binary is mounted read-only to read the
+#     password file before the server starts.
+#   busybox:1.37.0-musl (digest pinned, read 2026-11-15) - current BusyBox
+#     1.37 musl tag (same digest as 1.37-musl); the statically linked binary
+#     runs inside the SurrealDB image without extra libraries.
+#
+# Database password: no password is written in this file. On first start the
+# init service generates a random value into
+# /home/ubuntu/workspace/open-notebook/db-secrets (root-only); SurrealDB and
+# Open Notebook read it from there, mounted read-only.
+#   vllm/vllm-openai:v0.33.0 (digest pinned, CUDA 13 build) - v0.32.0-cu129
+#     fails on the pooling path (libcudart.so.13); v0.33.0 ran on an
+#     AWS L40S instance on 2026-11-15
+#   ghcr.io/speaches-ai/speaches:0.8.3-cuda-12.6.3 - Speaches v0.8.3, the
+#     latest stable release (newer tags are release candidates).
+#   python:3.13.9-slim - runs the two one-shot helpers (standard library only).
+#
+# GPU memory on one 48 GB GPU: vllm 0.78 and vllm_embed 0.12 of the GPU; the
+# rest is left for Speaches.
+#
+# Persistence: everything lives under /home/ubuntu/workspace/open-notebook on
+# the host. It survives Stop and is destroyed by Delete.
+# Literal host paths, for Brev's Compose ingest.
+
+name: open-notebook-nemotron
+
+services:
+  init:
+    image: python:3.13.9-slim
+    restart: "no"
+    user: root
+    volumes:
+      - /home/ubuntu/workspace/open-notebook:/work
+    environment:
+      INIT_SCRIPT: |
+        import os, secrets
+        for d in ("notebook_data/secrets", "surreal_data", "huggingface", "speaches", "db-secrets"):
+            os.makedirs(os.path.join("/work", d), exist_ok=True)
+        os.chmod("/work/db-secrets", 0o700)
+        # Speaches runs as the image's non-root user (uid 1000).
+        os.chown("/work/speaches", 1000, 1000)
+        def once(path, value, label):
+            # Written on first boot only; never printed.
+            if os.path.exists(path) and os.path.getsize(path) > 0:
+                print("init: " + label + " already present")
+                return
+            tmp = path + ".new"
+            old = os.umask(0o077)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            os.write(fd, value.encode())
+            os.close(fd)
+            os.umask(old)
+            os.replace(tmp, path)
+            print("init: " + label + " created")
+        once("/work/notebook_data/secrets/encryption.key", secrets.token_urlsafe(48), "encryption key")
+        # Random database password (48 hex characters from the OS random source).
+        once("/work/db-secrets/surreal-password", secrets.token_hex(24), "database password")
+    command: ["python3", "-c", "import os; exec(os.environ['INIT_SCRIPT'])"]
+
+  tools:
+    # Sidecar: copies the static BusyBox binary to the host so the SurrealDB
+    # release image (no shell) can read the password file, then stays idle so
+    # its health check can gate surrealdb (Brev compose ingest rejects
+    # completion-gated depends_on).
+    image: busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478
+    restart: unless-stopped
+    # Copy once; on later starts the file already exists and may be in use by surrealdb.
+    command: ["sh", "-c", "test -x /tools/busybox || cp /bin/busybox /tools/busybox; exec sleep 2147483647"]
+    healthcheck:
+      test: ["CMD", "test", "-x", "/tools/busybox"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - /home/ubuntu/workspace/open-notebook/tools:/tools
+
+  surrealdb:
+    image: surrealdb/surrealdb:v2.7.0@sha256:e5d7387e3727bbe2f7cd6d869e48cd34777272258572ead37c9656b25f745723
+    restart: unless-stopped
+    user: root
+    depends_on:
+      init:
+        condition: service_started
+      tools:
+        condition: service_healthy
+    # Database user root with a random password generated by the init service
+    # on first boot. The database publishes no port, so only the services in
+    # this stack can reach it. The wrapper uses only BusyBox sh, test, sleep
+    # and cat, and never prints the password.
+    environment:
+      SURREAL_USER: "root"
+    entrypoint: ["/tools/busybox", "sh", "-c"]
+    command:
+      - 'until test -s /db-secrets/surreal-password; do /tools/busybox sleep 2; done; SURREAL_PASS="$$(/tools/busybox cat /db-secrets/surreal-password)"; export SURREAL_PASS; exec /surreal start --log info rocksdb:/mydata/mydatabase.db'
+    volumes:
+      - /home/ubuntu/workspace/open-notebook/tools:/tools:ro
+      - /home/ubuntu/workspace/open-notebook/db-secrets:/db-secrets:ro
+      - /home/ubuntu/workspace/open-notebook/surreal_data:/mydata
+
+  open_notebook:
+    image: lfnovo/open_notebook:1.15.1
+    restart: unless-stopped
+    depends_on:
+      - surrealdb
+      - init
+    # Reads the generated database password, then runs the image's own
+    # entrypoint and command (v1.15.1 Dockerfile).
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'until [ -s /db-secrets/surreal-password ]; do echo "waiting for the database password"; sleep 2; done; SURREAL_PASSWORD="$$(cat /db-secrets/surreal-password)"; export SURREAL_PASSWORD; exec /app/scripts/docker-entrypoint.sh /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf'
+    environment:
+      SURREAL_URL: "ws://surrealdb:8000/rpc"
+      SURREAL_USER: "root"
+      SURREAL_NAMESPACE: "open_notebook"
+      SURREAL_DATABASE: "open_notebook"
+      # Random key written by the init service on first boot.
+      OPEN_NOTEBOOK_ENCRYPTION_KEY_FILE: "/app/data/secrets/encryption.key"
+      # Optional password for the web app and API; empty leaves it off.
+      OPEN_NOTEBOOK_PASSWORD: "${OPEN_NOTEBOOK_PASSWORD:-}"
+      # Local models can be slower than cloud APIs on long podcast scripts.
+      ESPERANTO_LLM_TIMEOUT: "600"
+      ESPERANTO_TTS_TIMEOUT: "600"
+    volumes:
+      - /home/ubuntu/workspace/open-notebook/db-secrets:/db-secrets:ro
+      - /home/ubuntu/workspace/open-notebook/notebook_data:/app/data
+    ports:
+      # Served to deployers through the Brev Secure Link "open-notebook".
+      - "8502:8502"
+
+  vllm:
+    image: vllm/vllm-openai:v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
+    restart: unless-stopped
+    ipc: host
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+    volumes:
+      - /home/ubuntu/workspace/open-notebook/huggingface:/root/.cache/huggingface
+    # Image entrypoint is `vllm serve`.
+    command:
+      - "${MODEL:-nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8}"
+      - "--served-model-name"
+      - "${MODEL:-nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--trust-remote-code"
+      - "--max-model-len"
+      - "32768"
+      # Explicit cap instead of the vLLM default (1024), which can exceed the
+      # Mamba cache blocks of Nemotron hybrid models at startup.
+      - "--max-num-seqs"
+      - "16"
+      - "--gpu-memory-utilization"
+      - "0.78"
+      # Answer directly, without a visible reasoning trace, for notes and podcasts.
+      - "--default-chat-template-kwargs"
+      - '{"enable_thinking": false}'
+    ports:
+      # Host-local only: reach the API with `brev port-forward`.
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1800s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  vllm_embed:
+    image: vllm/vllm-openai:v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
+    restart: unless-stopped
+    ipc: host
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+    volumes:
+      - /home/ubuntu/workspace/open-notebook/huggingface:/root/.cache/huggingface
+    command:
+      - "nvidia/Nemotron-3.5-Embed-1B-BF16"
+      - "--served-model-name"
+      - "nvidia/Nemotron-3.5-Embed-1B-BF16"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--dtype"
+      - "bfloat16"
+      - "--max-model-len"
+      - "8192"
+      - "--gpu-memory-utilization"
+      - "0.12"
+      - "--chat-template-content-format"
+      - "openai"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 900s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:0.8.3-cuda-12.6.3
+    restart: unless-stopped
+    depends_on:
+      - init
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"
+    volumes:
+      - /home/ubuntu/workspace/open-notebook/speaches:/home/ubuntu/.cache/huggingface/hub
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  seed:
+    image: python:3.13.9-slim
+    # Retries until the configuration succeeds once; a finished seed is not
+    # started again on later boots, so your own settings are kept.
+    restart: on-failure
+    depends_on:
+      - open_notebook
+      - speaches
+    environment:
+      MODEL: "${MODEL:-nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8}"
+      # Sent as a Bearer token to the Open Notebook API when set; never printed.
+      OPEN_NOTEBOOK_PASSWORD: "${OPEN_NOTEBOOK_PASSWORD:-}"
+      SEED_SCRIPT: |
+        import json, os, sys, time, urllib.error, urllib.request
+        API = "http://open_notebook:5055/api"
+        SPEACHES = "http://speaches:8000"
+        CHAT = os.environ["MODEL"]
+        EMBED = "nvidia/Nemotron-3.5-Embed-1B-BF16"
+        TTS = "speaches-ai/Kokoro-82M-v1.0-ONNX"
+        STT = "Systran/faster-whisper-small"
+
+        def api_auth():
+            return os.environ.get("OPEN_NOTEBOOK_PASSWORD") or ""
+
+        def call(method, url, body=None, timeout=60):
+            data = None if body is None else json.dumps(body).encode()
+            headers = {"Content-Type": "application/json"}
+            if api_auth() and url.startswith(API):
+                headers["Authorization"] = "Bearer " + api_auth()
+            req = urllib.request.Request(url, data=data, method=method,
+                                         headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                raw = r.read()
+            return json.loads(raw) if raw else None
+
+        def items(res, key):
+            if isinstance(res, dict):
+                return res.get(key) or []
+            return res or []
+
+        def wait(url, budget=1800):
+            end = time.time() + budget
+            while time.time() < end:
+                try:
+                    urllib.request.urlopen(url, timeout=10).read()
+                    return
+                except Exception:
+                    time.sleep(10)
+            sys.exit("seed: timed out waiting for " + url)
+
+        wait("http://open_notebook:5055/health")
+        wait(SPEACHES + "/health")
+
+        for m in (TTS, STT):
+            try:
+                call("POST", SPEACHES + "/v1/models/" + m, timeout=1800)
+            except urllib.error.HTTPError as e:
+                print("seed: speaches download of", m, "returned", e.code)
+            call("GET", SPEACHES + "/v1/models/" + m)
+            print("seed: speech model ready:", m)
+
+        def credential(name, base_url, modalities):
+            for c in items(call("GET", API + "/credentials"), "credentials"):
+                if c.get("name") == name:
+                    return c["id"]
+            return call("POST", API + "/credentials", {
+                "name": name, "provider": "openai_compatible",
+                "modalities": modalities, "base_url": base_url})["id"]
+
+        def model(name, kind, cred):
+            for m in items(call("GET", API + "/models"), "models"):
+                if m.get("name") == name and m.get("type") == kind:
+                    return m["id"]
+            return call("POST", API + "/models", {
+                "name": name, "provider": "openai_compatible",
+                "type": kind, "credential": cred})["id"]
+
+        c_chat = credential("Local vLLM chat", "http://vllm:8000/v1", ["language"])
+        c_embed = credential("Local vLLM embeddings", "http://vllm_embed:8000/v1", ["embedding"])
+        c_speech = credential("Local Speaches", SPEACHES + "/v1", ["text_to_speech", "speech_to_text"])
+        chat = model(CHAT, "language", c_chat)
+        embed = model(EMBED, "embedding", c_embed)
+        tts = model(TTS, "text_to_speech", c_speech)
+        stt = model(STT, "speech_to_text", c_speech)
+
+        call("PUT", API + "/models/defaults", {
+            "default_chat_model": chat, "default_transformation_model": chat,
+            "large_context_model": chat, "default_tools_model": chat,
+            "default_embedding_model": embed,
+            "default_text_to_speech_model": tts,
+            "default_speech_to_text_model": stt})
+
+        SPEAKERS = "Local voices (Kokoro)"
+        sp = [p for p in items(call("GET", API + "/speaker-profiles"), "profiles")
+              if p.get("name") == SPEAKERS]
+        if sp:
+            sp_id = sp[0]["id"]
+        else:
+            sp_id = call("POST", API + "/speaker-profiles", {
+                "name": SPEAKERS,
+                "description": "Two local Kokoro voices served by Speaches",
+                "voice_model": tts,
+                "speakers": [
+                    {"name": "Adam", "voice_id": "am_adam",
+                     "backstory": "Curious host who asks the questions a newcomer would ask.",
+                     "personality": "warm, curious, concise"},
+                    {"name": "Bella", "voice_id": "af_bella",
+                     "backstory": "Researcher who has read every source in the notebook.",
+                     "personality": "clear, precise, friendly"}]})["id"]
+
+        EPISODE = "Local podcast (Nemotron)"
+        if not [p for p in items(call("GET", API + "/episode-profiles"), "profiles")
+                if p.get("name") == EPISODE]:
+            call("POST", API + "/episode-profiles", {
+                "name": EPISODE,
+                "description": "Two-host discussion generated and voiced on this GPU",
+                "speaker_config": sp_id,
+                "outline_llm": chat, "transcript_llm": chat,
+                "default_briefing": "Create an engaging two-host discussion of the key ideas in the sources, explained for a curious newcomer.",
+                "num_segments": 4})
+
+        print("SEED OK chat=" + CHAT + " embedding=" + EMBED + " tts=" + TTS + " stt=" + STT)
+    command: ["python3", "-c", "import os; exec(os.environ['SEED_SCRIPT'])"]

@@ -1,0 +1,196 @@
+# Cosmos 3 Nano World Model Studio
+# NVIDIA Cosmos3-Nano served by vLLM-Omni, with a small Gradio studio for
+# text-to-video and image-to-video. Docker Compose mode, two services:
+#   cosmos  - vllm serve nvidia/Cosmos3-Nano --omni on 127.0.0.1:8000
+#             (POST /v1/videos/sync returns an MP4 with audio)
+#   studio  - Gradio web UI on port 7860 (Brev Secure Link "open-cosmos-studio")
+#
+# Launch parameter (Compose interpolation; Brev passes it to the first
+# `docker compose up` only and writes no .env file; the value stays in the
+# container configuration, so Stop/Start needs no re-entry):
+#   HF_TOKEN  Hugging Face read token. Cosmos guardrails are on by default and
+#             use the gated nvidia/Cosmos-1.0-Guardrail model; request access
+#             on Hugging Face with the same account first. The token reaches
+#             the cosmos service through `environment` only and is never
+#             printed. The server starts with guardrails enabled; this file
+#             passes no option that disables them.
+#
+# Pins - each read from its registry on 2026-11-15:
+#   vllm/vllm-omni:cosmos3@sha256:86fb713bf73e118e537a55fa013dcdbdf2468ed61b98f4f2e7934a9482181dc1
+#     The vLLM-Omni image the vLLM recipe for Cosmos3-Nano names. The cosmos3
+#     tag can move, so it is pinned by its index digest (tag last updated
+#     2026-10-19 on Docker Hub).
+#   nvidia/Cosmos3-Nano @ 45666784803b3a7ad577e0def405f9afcc3bddb2
+#     Model revision on Hugging Face (last modified 2026-11-12), OpenMDW-1.1,
+#     a large download (tens of GB).
+#   python:3.12.16-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
+#     Small base for the studio (Docker Hub tag pushed 2026-11-05).
+#   gradio==6.32.0  newest Gradio release on PyPI (2026-11-12).
+#
+# Persistence: the Hugging Face cache and generated videos live under
+# /home/ubuntu/workspace/cosmos3-studio on the host. They survive Stop and are
+# destroyed by Delete.
+
+name: cosmos3-studio
+
+services:
+  cosmos:
+    image: vllm/vllm-omni:cosmos3@sha256:86fb713bf73e118e537a55fa013dcdbdf2468ed61b98f4f2e7934a9482181dc1
+    restart: unless-stopped
+    ipc: host
+    environment:
+      HF_TOKEN: "${HF_TOKEN}"
+      HF_HOME: "/root/.cache/huggingface"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    volumes:
+      - /home/ubuntu/workspace/cosmos3-studio/huggingface:/root/.cache/huggingface
+    entrypoint: ["vllm", "serve"]
+    command:
+      - "nvidia/Cosmos3-Nano"
+      - "--revision"
+      - "45666784803b3a7ad577e0def405f9afcc3bddb2"
+      - "--omni"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--init-timeout"
+      - "1800"
+    ports:
+      # Host-local only: reach the API with `brev port-forward`, never a public port.
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 2400s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  studio:
+    image: python:3.12.16-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
+    restart: unless-stopped
+    depends_on:
+      cosmos:
+        # Start the UI at once; it shows the model status until Cosmos is loaded.
+        condition: service_started
+    volumes:
+      - /home/ubuntu/workspace/cosmos3-studio:/ws
+    ports:
+      # Served to deployers through the Brev Secure Link "open-cosmos-studio".
+      - "7860:7860"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7860/', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 300s
+    # STUDIO_SETUP installs the pinned Gradio once into the workspace, then runs
+    # the studio app held in STUDIO_APP.
+    entrypoint: ["/bin/bash", "-c", "eval \"$$STUDIO_SETUP\""]
+    environment:
+      COSMOS_URL: "http://cosmos:8000"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      GRADIO_ANALYTICS_ENABLED: "False"
+      STUDIO_SETUP: |
+        set -euo pipefail
+        mkdir -p /ws/envs /ws/outputs
+        if [ ! -f /ws/envs/studio/.installed-gradio-6.32.0 ]; then
+          rm -rf /ws/envs/studio
+          python -m venv /ws/envs/studio
+          /ws/envs/studio/bin/pip install --no-cache-dir gradio==6.32.0
+          touch /ws/envs/studio/.installed-gradio-6.32.0
+        fi
+        echo "studio: environment ready"
+        exec /ws/envs/studio/bin/python -u -c "$$STUDIO_APP"
+      STUDIO_APP: |
+        import os, time
+        import httpx
+        import gradio as gr
+
+        API = os.environ.get("COSMOS_URL", "http://cosmos:8000")
+        OUT = "/ws/outputs"
+        SIZES = ["1280x720", "832x480"]
+        NEG = "blurry, low quality, distorted, watermark, text artifacts"
+
+
+        def status():
+            try:
+                r = httpx.get(API + "/health", timeout=5)
+                return "Cosmos3-Nano: ready" if r.status_code == 200 else "Cosmos3-Nano: loading"
+            except Exception:
+                return "Cosmos3-Nano: loading (the first start is a large download (tens of GB) and can take 20-40 minutes)"
+
+
+        def generate(prompt, image, size, frames, steps, seed, guidance, negative):
+            if not prompt or not prompt.strip():
+                raise gr.Error("Enter a prompt.")
+            data = {
+                "prompt": prompt.strip(),
+                "negative_prompt": (negative or "").strip(),
+                "size": size,
+                "num_frames": str(int(frames)),
+                "fps": "24",
+                "num_inference_steps": str(int(steps)),
+                "guidance_scale": str(float(guidance)),
+                "seed": str(int(seed)),
+            }
+            files = None
+            if image:
+                files = {"input_reference": (os.path.basename(image), open(image, "rb"))}
+            try:
+                t0 = time.time()
+                r = httpx.post(API + "/v1/videos/sync", data=data, files=files,
+                               headers={"Accept": "video/mp4"}, timeout=3600)
+            finally:
+                if files:
+                    files["input_reference"][1].close()
+            if r.status_code != 200:
+                raise gr.Error("Cosmos returned HTTP " + str(r.status_code) + ": " + r.text[:500])
+            kind = "i2v" if image else "t2v"
+            path = os.path.join(OUT, time.strftime("%Y%m%d-%H%M%S") + "-" + kind + "-seed" + str(int(seed)) + ".mp4")
+            with open(path, "wb") as f:
+                f.write(r.content)
+            took = int(time.time() - t0)
+            return path, "Saved " + path + " in " + str(took) + " s (host: /home/ubuntu/workspace/cosmos3-studio/outputs)"
+
+
+        def controls():
+            with gr.Row():
+                size = gr.Dropdown(SIZES, value="1280x720", label="Resolution")
+                frames = gr.Slider(5, 189, value=45, step=4, label="Frames (24 fps)")
+                steps = gr.Slider(10, 50, value=30, step=1, label="Steps")
+            with gr.Row():
+                seed = gr.Number(value=123, precision=0, label="Seed")
+                guidance = gr.Slider(1.0, 10.0, value=6.0, step=0.5, label="Guidance scale")
+            negative = gr.Textbox(value=NEG, label="Negative prompt", lines=2)
+            return size, frames, steps, seed, guidance, negative
+
+
+        with gr.Blocks(title="Cosmos 3 Nano Video Studio") as demo:
+            gr.Markdown("# Cosmos 3 Nano Video Studio\nText to video and image to video with NVIDIA Cosmos3-Nano on vLLM-Omni. Built on NVIDIA Cosmos.")
+            st = gr.Markdown(status())
+            gr.Button("Refresh status").click(lambda: status(), None, st)
+            with gr.Tab("Text to video"):
+                p1 = gr.Textbox(label="Prompt", lines=4, value="A robot arm picks up a red cube from a wooden table and places it in a blue bin, steady camera, daylight.")
+                c1 = controls()
+                b1 = gr.Button("Generate", variant="primary")
+                v1 = gr.Video(label="Result")
+                m1 = gr.Markdown()
+                b1.click(lambda p, *a: generate(p, None, *a), [p1, *c1], [v1, m1])
+            with gr.Tab("Image to video"):
+                img = gr.Image(type="filepath", label="First frame (JPG, PNG or WebP)")
+                p2 = gr.Textbox(label="Prompt", lines=4)
+                c2 = controls()
+                b2 = gr.Button("Generate", variant="primary")
+                v2 = gr.Video(label="Result")
+                m2 = gr.Markdown()
+                b2.click(lambda p, i, *a: generate(p, i, *a), [p2, img, *c2], [v2, m2])
+
+        demo.queue(default_concurrency_limit=1).launch(server_name="0.0.0.0", server_port=7860, allowed_paths=[OUT])

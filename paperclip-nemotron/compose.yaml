@@ -1,0 +1,112 @@
+# Paperclip agent team on a local NVIDIA Nemotron model (Docker Compose).
+#
+# Launch parameters:
+#   MODEL         - Hugging Face model id vLLM serves (default
+#                   nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4).
+#   MAX_MODEL_LEN - context length in tokens vLLM allows (default 65536).
+#   HF_TOKEN      - optional Hugging Face read token, no default. The listed
+#                   models are not gated; a token only raises download limits.
+# Parameters are read by the first `docker compose up` and kept in each
+# container's configuration, so stop/start needs no re-entry. HF_TOKEN reaches
+# only the vllm service environment, never a command, image name or label.
+#
+# Pinned images:
+#   vllm/vllm-openai:v0.27.1 (+ digest) - the vLLM version the Nemotron 3.5 Lightning
+#     model card validates (Docker Hub tag pushed 2026-08-11).
+#   ghcr.io/paperclipai/paperclip:2026.1106.0 (+ digest) - Paperclip release
+#     v2026.1106.0 (2026-11-06).
+#
+# Paperclip reaches the model through its OpenCode adapter. vLLM serves every
+# model under the fixed name "agent-model", so agents select
+# "vllm-local/agent-model" whatever MODEL is.
+#
+# Secrets: Paperclip needs BETTER_AUTH_SECRET and
+# PAPERCLIP_TOOL_ACTION_SIGNING_SECRET. They are generated on the instance at
+# first boot into /home/ubuntu/workspace/paperclip/.deploy-secrets.env (mode 600) and
+# reused on every restart. Nothing secret is stored in this file.
+#
+# Persistence: Paperclip data (embedded PostgreSQL, agent workspaces, uploads)
+# and the Hugging Face cache live under /home/ubuntu/workspace on the host, which
+# survives stop and is destroyed on delete.
+
+name: paperclip-nemotron
+
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967
+    restart: unless-stopped
+    ipc: host
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+      MODEL: "${MODEL:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}"
+      MAX_MODEL_LEN: "${MAX_MODEL_LEN:-65536}"
+      # Disable DeepGEMM so FP8 MoE models use vLLM's Triton/CUTLASS kernels.
+      VLLM_USE_DEEP_GEMM: "0"
+    volumes:
+      - /home/ubuntu/workspace/huggingface:/root/.cache/huggingface
+    # Per-model flags. Nemotron: the model card's vLLM flags (Marlin MoE
+    # backend for NVFP4, FP8 KV cache, nemotron_v3 reasoning parser,
+    # qwen3_coder tool parser). Qwen3: hermes tool parser.
+    # The script reads MODEL and MAX_MODEL_LEN from the container environment.
+    # Every model gets an explicit --max-num-seqs: the vLLM default (1024) can
+    # exceed the Mamba cache blocks of Nemotron hybrid models at startup.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - 'set -euo pipefail; case "$$MODEL" in nvidia/NVIDIA-Nemotron-3.5-Lightning-*) EXTRA=(--moe-backend marlin --kv-cache-dtype fp8 --enable-prefix-caching --reasoning-parser nemotron_v3 --tool-call-parser qwen3_coder) ;; nvidia/NVIDIA-Nemotron-3-Nano-*) EXTRA=(--trust-remote-code --kv-cache-dtype fp8 --reasoning-parser nemotron_v3 --tool-call-parser qwen3_coder) ;; *) EXTRA=(--enable-prefix-caching --tool-call-parser hermes) ;; esac; exec vllm serve "$$MODEL" --served-model-name agent-model --host 0.0.0.0 --port 8000 --max-model-len "$$MAX_MODEL_LEN" --gpu-memory-utilization 0.90 --max-num-seqs 16 --enable-auto-tool-choice "$${EXTRA[@]}"'
+    ports:
+      # Host-local only: reach the API with `brev port-forward`, never a public port.
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      # The vllm-openai image ships no curl; python3 is present.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1800s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  paperclip:
+    image: ghcr.io/paperclipai/paperclip:2026.1106.0@sha256:d6584f05cf57a4b26c117eb083725f18c1fe69ddafa7d16c9f8cce83f6fa17da
+    container_name: paperclip
+    restart: unless-stopped
+    # Upstream compose settings: process ceiling and adapter settlement window.
+    pids_limit: 2048
+    stop_grace_period: 90s
+    depends_on:
+      vllm:
+        # Start the UI at once; agents can run once vLLM has loaded the model.
+        condition: service_started
+    environment:
+      HOST: "0.0.0.0"
+      PAPERCLIP_HOME: "/paperclip"
+      PAPERCLIP_DEPLOYMENT_MODE: "authenticated"
+      PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
+      # OpenCode adapter -> local vLLM (OpenAI-compatible, no API key).
+      PAPERCLIP_OPENCODE_PROVIDERS: '{"vllm-local":{"npm":"@ai-sdk/openai-compatible@3.0.92","name":"Local vLLM","options":{"baseURL":"http://vllm:8000/v1"},"models":{"agent-model":{}}}}'
+      OPENCODE_ALLOW_ALL_MODELS: "true"
+      PAPERCLIP_OPENCODE_SMALL_MODEL: "vllm-local/agent-model"
+    # Generate the two Paperclip secrets once, load them and any extra allowed
+    # hostnames, then hand over to the image's own entrypoint and command.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'set -eu; umask 077; S=/paperclip/.deploy-secrets.env; if [ ! -s "$$S" ]; then node -e "const c=require(\"crypto\");const h=()=>c.randomBytes(32).toString(\"hex\");process.stdout.write(\"BETTER_AUTH_SECRET=\"+h()+\"\\nPAPERCLIP_TOOL_ACTION_SIGNING_SECRET=\"+h()+\"\\n\")" > "$$S.tmp"; mv "$$S.tmp" "$$S"; fi; set -a; . "$$S"; set +a; H=/paperclip/allowed-hostnames.txt; if [ -s "$$H" ]; then PAPERCLIP_ALLOWED_HOSTNAMES="$$(tr -s "[:space:]" "," < "$$H")"; export PAPERCLIP_ALLOWED_HOSTNAMES; fi; exec /usr/bin/tini -s -- docker-entrypoint.sh node server/dist-runtime/index.mjs'
+    volumes:
+      - /home/ubuntu/workspace/paperclip:/paperclip
+    ports:
+      # Served to deployers only through the Brev Secure Link "open-paperclip".
+      - "3100:3100"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3100/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 120s

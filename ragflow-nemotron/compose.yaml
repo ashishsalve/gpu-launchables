@@ -1,0 +1,266 @@
+# RAGFlow with NVIDIA Nemotron - RAGFlow 1.0 with local NVIDIA Nemotron chat and
+# embedding models served by vLLM.
+# Brev Launchable, Docker Compose mode. One file, no other files needed.
+#
+# Launch parameters:
+#   MODEL (Choice) - chat model served by vLLM.
+#     nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-BF16 (default) or Qwen/Qwen3-8B.
+#   EMBED_MODEL (Choice) - embedding model served by vLLM.
+#     nvidia/Nemotron-3.5-Embed-1B-BF16 (default) or Qwen/Qwen3-Embedding-0.6B.
+#     Changing it later means re-indexing every dataset, so pick it at deploy time.
+#   HF_TOKEN (Text, no default, optional) - Hugging Face read token. Every model
+#     offered here is public; a token only raises download rate limits. It reaches
+#     the two vLLM containers through service environment only, never a command.
+# Brev passes parameters to the first `docker compose up` only and writes no .env;
+# values stay in each container's configuration, so Stop/Start needs no re-entry.
+#
+# Pins - images identical to the RAGFlow on your own GPU Launchable (Brev smoke
+# 2026-11-15 on AWS g6e.xlarge L40S); tags and digests read from Docker Hub
+# 2026-11-14 and 2026-11-15. This file: Brev smoke not yet run (see README.md).
+#   infiniflow/ragflow:v1.0.0 - RAGFlow 1.0.0 (GitHub release v1.0.0, 2026-11-06).
+#   infiniflow/infinity:v0.7.5-x64-v3 - Infinity document engine used by upstream
+#     docker/docker-compose-base.yml at v1.0.0; needs no vm.max_map_count change.
+#   mysql:8.0.40 - metadata database, the image upstream uses at v1.0.0.
+#   pgsty/silo:RELEASE.2026-08-06T00-00-00Z - S3-compatible object store (a MinIO
+#     fork), the image upstream uses at v1.0.0.
+#   apache/kvrocks:2.16.0 - cache, the image upstream uses at v1.0.0.
+#   nats:2.14.2 - task queue, the image upstream uses at v1.0.0.
+#   vllm/vllm-openai:v0.33.0 - vLLM release v0.33.0, CUDA 13.0 build. The
+#     Nemotron chat model card names vllm/vllm-openai:v0.31.0. The Nemotron
+#     embedding card's examples use vLLM 0.32.0 with transformers>=5.16.1,<5.20.0;
+#     v0.33.0 requires transformers >= 5.16.1, < 5.21.0 (requirements/common.txt,
+#     read 2026-11-15) and registers the gemma4 tool and reasoning parsers.
+# Models - Hugging Face revisions read on 2026-11-14 (Qwen) and 2026-11-15 (NVIDIA):
+#   nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-BF16 49843eed8db1f1c616c47af75cfd36e07aec0667
+#     (OpenMDW-1.1; Gemma4ForConditionalGeneration, text input only here: the
+#     card sets the image, video and audio prompt limits to zero)
+#   Qwen/Qwen3-8B b968826d9c46dd6066d109eabc6255188de91218
+#   nvidia/Nemotron-3.5-Embed-1B-BF16 e24ca1e346bcc53572bd7bdc02b3e8ebf66c197c
+#     (OpenMDW-1.1; serve flags from its model card)
+#   Qwen/Qwen3-Embedding-0.6B 97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
+#   Embedding revisions are pinned so stored vectors stay valid.
+#
+# Internal passwords: no password is written in this file. On first start the
+# ragflow container generates random values into
+# /home/ubuntu/workspace/ragflow/secrets (root-only files); MySQL, the object store
+# and Kvrocks read them from there. None of their ports is published.
+#
+# Startup order without completion-gated depends_on: ragflow waits until every
+# backing service accepts connections; vllm-chat waits for vllm-embed so the two
+# vLLM processes do not measure GPU memory at the same time.
+#
+# Persistence: everything lives under /home/ubuntu/workspace/ragflow on the host.
+# It survives Stop and is destroyed by Delete.
+
+name: ragflow
+
+services:
+  ragflow:
+    image: infiniflow/ragflow:v1.0.0@sha256:ed8dff41a7530ed8fb037fe7479a7c535429d42fa8d00aec28b54bcbc056934d
+    restart: unless-stopped
+    depends_on:
+      - mysql
+      - minio
+      - kvrocks
+      - nats
+      - infinity
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+      nproc:
+        soft: 65535
+        hard: 65535
+    environment:
+      DOC_ENGINE: "infinity"
+      DB_TYPE: "mysql"
+      DEVICE: "cpu"
+      INFINITY_HOST: "infinity"
+      MYSQL_HOST: "mysql"
+      MYSQL_DBNAME: "rag_flow"
+      MINIO_HOST: "minio"
+      MINIO_USER: "rag_flow"
+      KVROCKS_HOST: "kvrocks"
+      KVROCKS_PORT: "6379"
+      NATS_HOST: "nats"
+      NATS_PORT: "4222"
+      ENABLE_REGISTER: "1"
+      REGISTER_ENABLED: "1"
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+      TZ: "UTC"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - 'set -eu; umask 077; for n in internal-password session-key; do f=/secrets/$$n; if [ ! -s "$$f" ]; then od -An -N24 -tx1 /dev/urandom | tr -d " \n" > "$$f.new"; mv "$$f.new" "$$f"; fi; done; p="$$(cat /secrets/internal-password)"; export MYSQL_PASSWORD="$$p" MINIO_PASSWORD="$$p" REDIS_PASSWORD="$$p" RAGFLOW_SECRET_KEY="$$(cat /secrets/session-key)"; unset p; umask 022; for hp in mysql:3306 minio:9000 kvrocks:6379 nats:4222 infinity:23817; do until (exec 3<>"/dev/tcp/$${hp%%:*}/$${hp##*:}") 2>/dev/null; do echo "waiting for $$hp"; sleep 3; done; done; cd /ragflow; exec ./entrypoint.sh --enable-adminserver --init-superuser'
+    volumes:
+      - /home/ubuntu/workspace/ragflow/secrets:/secrets
+      - /home/ubuntu/workspace/ragflow/logs:/ragflow/logs
+    ports:
+      # Web UI and API. Served to deployers only through the Brev Secure Link
+      # "open-ragflow".
+      - "8080:80"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "-o", "/dev/null", "http://localhost:80/api/v1/system/healthz"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 120s
+
+  infinity:
+    image: infiniflow/infinity:v0.7.5-x64-v3@sha256:1ef4343acd44e99162d70a8ce45a73c235a5ec1cfa5e53a3a0a638b1cc17ece8
+    restart: unless-stopped
+    # No config file: Infinity's built-in defaults match the upstream
+    # infinity_conf.toml (listen 0.0.0.0, ports 23817/23820/5432, data under
+    # /var/infinity, 8GB buffer).
+    mem_limit: 8073741824
+    ulimits:
+      nofile:
+        soft: 500000
+        hard: 500000
+    volumes:
+      - /home/ubuntu/workspace/ragflow/infinity:/var/infinity
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:23820/admin/node/current"]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
+  mysql:
+    image: mysql:8.0.40@sha256:d58ac93387f644e4e040c636b8f50494e78e5afc27ca0a87348b2f577da2b7ff
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: "/secrets/internal-password"
+      MYSQL_DATABASE: "rag_flow"
+      TZ: "UTC"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - 'until [ -s /secrets/internal-password ]; do echo "waiting for the internal password"; sleep 2; done; exec docker-entrypoint.sh mysqld --datadir=/mysql-data --max_connections=1000 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password --tls_version=TLSv1.2,TLSv1.3 --binlog_expire_logs_seconds=604800 --innodb-buffer-pool-size=1G --innodb-io-capacity=2000 --innodb-io-capacity-max=4000 --innodb-redo-log-capacity=1G'
+    volumes:
+      - /home/ubuntu/workspace/ragflow/secrets:/secrets:ro
+      # Data directory moved off the image default path with --datadir above.
+      - /home/ubuntu/workspace/ragflow/mysql:/mysql-data
+    healthcheck:
+      # mysqladmin ping exits 0 whenever the server is up, even without a password.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  minio:
+    image: pgsty/silo:RELEASE.2026-08-06T00-00-00Z@sha256:29a498b24669cae1fed11c1a2fb2b3d73c68829a0a9c0b14e71b386671d38fac
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: "rag_flow"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'until [ -s /secrets/internal-password ]; do echo "waiting for the internal password"; sleep 2; done; MINIO_ROOT_PASSWORD="$$(cat /secrets/internal-password)"; export MINIO_ROOT_PASSWORD; exec /usr/bin/docker-entrypoint.sh server --console-address :9001 /data'
+    volumes:
+      - /home/ubuntu/workspace/ragflow/secrets:/secrets:ro
+      - /home/ubuntu/workspace/ragflow/minio:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
+  kvrocks:
+    image: apache/kvrocks:2.16.0@sha256:9e632c317c83c80d92f1c9d22ac6aa9f64d149e1f04ff2af5f15a5768a01c4b7
+    restart: unless-stopped
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    # Same steps as upstream docker/kvrocks-entrypoint.sh at v1.0.0: Kvrocks does
+    # not expand environment variables in its config, so the config is rendered
+    # at start with the generated password.
+    command:
+      - 'set -eu; until [ -s /secrets/internal-password ]; do echo "waiting for the internal password"; sleep 2; done; umask 077; mkdir -p /kvrocks-data; { echo "bind 0.0.0.0"; echo "port 6379"; echo "dir /kvrocks-data"; printf "requirepass %s\n" "$$(cat /secrets/internal-password)"; } > /kvrocks-data/kvrocks.conf; exec kvrocks -c /kvrocks-data/kvrocks.conf --dir /kvrocks-data'
+    volumes:
+      - /home/ubuntu/workspace/ragflow/secrets:/secrets:ro
+      - /home/ubuntu/workspace/ragflow/kvrocks:/kvrocks-data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'REDISCLI_AUTH="$$(cat /secrets/internal-password)" redis-cli -p 6379 ping | grep -q PONG'
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
+  nats:
+    image: nats:2.14.2@sha256:bbfbb6c4cdaeb8a2e3ca57d3de30463a66a6c5181f324f3b680bcf858833d377
+    restart: unless-stopped
+    command: ["-js", "-sd", "/data", "--http_port", "8222"]
+    volumes:
+      - /home/ubuntu/workspace/ragflow/nats:/data
+    healthcheck:
+      test: ["CMD", "nats-server", "--health-check"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  vllm-embed:
+    image: vllm/vllm-openai:v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
+    restart: unless-stopped
+    shm_size: "2gb"
+    environment:
+      EMBED_MODEL: "${EMBED_MODEL:-nvidia/Nemotron-3.5-Embed-1B-BF16}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+    entrypoint: ["/bin/sh", "-c"]
+    # Nemotron embedding flags follow its model card (pooling runner, bf16,
+    # compile_mm_encoder). Qwen3-Embedding-0.6B is a causal LM converted with
+    # --convert embed, as in vLLM's pooling-model docs.
+    command:
+      - 'case "$$EMBED_MODEL" in nvidia/Nemotron-3.5-Embed-1B-BF16) rev=e24ca1e346bcc53572bd7bdc02b3e8ebf66c197c; set -- --runner pooling --dtype bfloat16 --compilation-config ''{"compile_mm_encoder":true}'' ;; Qwen/Qwen3-Embedding-0.6B) rev=97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3; set -- --runner pooling --convert embed ;; *) echo "unsupported EMBED_MODEL $$EMBED_MODEL"; exit 1 ;; esac; exec vllm serve "$$EMBED_MODEL" --revision "$$rev" --tokenizer-revision "$$rev" --served-model-name "$$EMBED_MODEL" --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.15 --max-model-len 8192 "$$@"'
+    volumes:
+      - /home/ubuntu/workspace/ragflow/hf-cache:/root/.cache/huggingface
+    ports:
+      # Host loopback only: reach it with `brev port-forward`.
+      - "127.0.0.1:8001:8000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 60
+      start_period: 180s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  vllm-chat:
+    image: vllm/vllm-openai:v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
+    restart: unless-stopped
+    shm_size: "8gb"
+    depends_on:
+      - vllm-embed
+    environment:
+      MODEL: "${MODEL:-nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-BF16}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+    entrypoint: ["/bin/sh", "-c"]
+    # Nemotron Bolt flags follow its model card: bf16, gemma4 tool and reasoning
+    # parsers, multimodal prompt limits at zero (text only). The card describes a
+    # hybrid architecture with a shared KV cache, so --max-num-seqs 16 is set
+    # explicitly for the reduced --gpu-memory-utilization used here.
+    command:
+      - 'i=0; until python3 -c "import urllib.request; urllib.request.urlopen(''http://vllm-embed:8000/health'', timeout=5)" 2>/dev/null || [ $$i -ge 120 ]; do i=$$((i+1)); echo "waiting for the embedding server"; sleep 5; done; case "$$MODEL" in nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-BF16) rev=49843eed8db1f1c616c47af75cfd36e07aec0667; set -- --dtype bfloat16 --max-num-seqs 16 --limit-mm-per-prompt ''{"image":0,"video":0,"audio":0}'' --enable-auto-tool-choice --tool-call-parser gemma4 --reasoning-parser gemma4 ;; Qwen/Qwen3-8B) rev=b968826d9c46dd6066d109eabc6255188de91218; set -- --enable-auto-tool-choice --tool-call-parser hermes --reasoning-parser qwen3 ;; *) echo "unsupported MODEL $$MODEL"; exit 1 ;; esac; exec vllm serve "$$MODEL" --revision "$$rev" --tokenizer-revision "$$rev" --served-model-name "$$MODEL" --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.72 --max-model-len 32768 "$$@"'
+    volumes:
+      - /home/ubuntu/workspace/ragflow/hf-cache:/root/.cache/huggingface
+    ports:
+      # Host loopback only: reach the OpenAI-compatible API with `brev port-forward`.
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 80
+      start_period: 300s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

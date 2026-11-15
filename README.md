@@ -1,9 +1,8 @@
 # GPU Launchables
 
 A curated collection of one-click, ready-to-run GPU application environments that you can deploy on NVIDIA Brev.
-Each folder in this repository is one application, with its setup files and a Launch on Brev badge that opens the deploy page.
+Each folder in this repository is one application, with its setup files and a README that explains what it runs, the GPU it needs, how its data persists and how to stop or delete it.
 These environments are for developers, researchers and teams who want a working GPU application in minutes without assembling drivers, containers and models by hand.
-Every application folder has its own README that explains what it runs, the GPU it needs, how its data persists and how to stop or delete it.
 
 | Application | Folder |
 | --- | --- |
@@ -15,3 +14,14 @@ Every application folder has its own README that explains what it runs, the GPU 
 | Wan 2.2 Video Studio (ComfyUI) | [open-video-studio](open-video-studio/) |
 | Chatterbox + WhisperX Voice Lab | [voice-lab](voice-lab/) |
 | ComfyUI Pro | [comfyui-pro](comfyui-pro/) |
+| Nemotron Chat with Open WebUI and vLLM | [nemotron-chat](nemotron-chat/) |
+| OpenHands Coding Agent on Nemotron | [openhands-nemotron](openhands-nemotron/) |
+| Paperclip Multi-Agent Team on Nemotron | [paperclip-nemotron](paperclip-nemotron/) |
+| NeMo Guardrails + garak LLM Security Lab | [nemo-guardrails-garak](nemo-guardrails-garak/) |
+| Nemotron Omni Multimodal Studio | [nemotron-omni-studio](nemotron-omni-studio/) |
+| Cosmos 3 Nano World Model Studio | [cosmos3-video-studio](cosmos3-video-studio/) |
+| Isaac Lab + Newton Robot Learning | [isaac-lab-newton](isaac-lab-newton/) |
+| Pipecat Voice Agent with Nemotron Speech | [pipecat-voice-agent-nemotron](pipecat-voice-agent-nemotron/) |
+| Open Notebook on Nemotron | [open-notebook-nemotron](open-notebook-nemotron/) |
+| RAPIDS Data Science with cuDF and cuML | [rapids-datascience](rapids-datascience/) |
+| RAGFlow RAG with NVIDIA Nemotron | [ragflow-nemotron](ragflow-nemotron/) |
