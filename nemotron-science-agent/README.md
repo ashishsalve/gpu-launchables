@@ -6,7 +6,7 @@ A local science agent on one GPU. [Hermes Agent](https://github.com/NousResearch
 
 Launchable ID: env-3MJzeo3flqm6QKSzSPh2NZEdvYR
 
-1x RTX PRO 6000 96GB, >= 92 GB VRAM | 300 GiB disk | ~$4.80/hr (console 2026-11-19) | ~30 min to ready | Stop to pause, Delete when done
+1x RTX PRO 6000 96GB, >= 92 GB VRAM | 300 GiB disk | ~$4.85/hr (console 2026-11-19) | ~35 min to ready | Stop to pause, Delete when done
 
 Current versions: vllm/vllm-openai:v0.32.0, ghcr.io/open-webui/open-webui:v0.13.3, Hermes Agent v0.23.2, GROMACS 2026.4, RDKit 2026.9.2, model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4
 
