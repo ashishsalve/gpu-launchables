@@ -8,7 +8,7 @@ Launchable ID: env-3MK1o9MUGMtZElFZvoYphMsZUmB
 
 Default GPU: 1x NVIDIA L40S 48GB.
 
-1x L40S 48GB, >= 48 GB VRAM | 200 GiB disk | ~$2.23/hr (console 2026-11-19) | ~20 min to ready | Stop to pause, Delete when done
+1x L40S 48GB, >= 48 GB VRAM | 200 GiB disk | ~$2.26/hr (console 2026-11-19) | ~30 min to ready | Stop to pause, Delete when done
 
 ## What you get
 
