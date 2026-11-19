@@ -1,12 +1,17 @@
 # NeMo Voice Agent on Nemotron
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3MJWty68hgJwmLpbCTRMPereHGb)
+
 Talk to the open-source NVIDIA NeMo Voice Agent on one GPU. Streaming speech
 recognition (Parakeet Realtime EOU) hears you, Nemotron 3 Diarization labels
 each speaker, NVIDIA Nemotron 3.5 Lightning answers through vLLM, and Kokoro
 speaks back. All models are configured to run locally on the instance; no
 hosted model endpoints are configured, and no API key is needed.
 
-Default compute: 1x NVIDIA L40S 48 GB, 200 GiB disk.
+Launchable ID: env-3MJWty68hgJwmLpbCTRMPereHGb
+
+Default compute: 1x NVIDIA L40S 48 GB, 256 GiB disk. The first deploy is ready
+in about 35 minutes.
 
 ## What you get
 
@@ -18,8 +23,8 @@ Default compute: 1x NVIDIA L40S 48 GB, 200 GiB disk.
 
 ## Try these three tasks
 
-1. Open the `nemo-voice-agent` link, allow the microphone and click Connect,
-   then speak to the agent.
+1. Open the `nemo-voice-agent` link, allow the microphone and click Connect.
+   The agent greets you first; then speak to it.
 2. Ask two people to speak in turn, then ask the agent to summarise what each
    person said. The DIARIZATION setting controls whether speaker diarization
    is enabled in the pipeline configuration.
@@ -29,7 +34,8 @@ Default compute: 1x NVIDIA L40S 48 GB, 200 GiB disk.
 ## How it works
 
 Caddy on port 8080 serves the web client and answers `/connect`, and the audio
-WebSocket is served on `/ws` on the same port, behind the one Brev Secure Link.
+WebSocket is served on `/ws` on the same port. The voice client connects
+through the one Brev Secure Link; no other port needs to be opened.
 The Pipecat server, its WebSocket and vLLM listen on localhost only.
 
 ## Settings
@@ -85,7 +91,7 @@ f3ff3571791e39611d31c381e3a41a3af07b4987; nvidia/magpie_tts_multilingual_357m at
 446bff55e1fe3d3aa29c771574e7d2b0fa322990; uv 0.13.8; Node.js v22.23.5;
 Caddy 2.11.9; huggingface_hub 2.4.0.
 
-Last smoke: not yet run.
+Last smoke: 2026-11-19, fresh deploy on AWS g6e.xlarge (1x L40S): ready in about 35 minutes.
 
 ## Credits and licences
 
