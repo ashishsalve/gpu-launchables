@@ -139,6 +139,11 @@ sudo docker cp "$CID:/opt/kernel-lab/host/." "$LAB/host/"
 sudo docker rm "$CID" >/dev/null
 sudo chown -R "$ME:$ME" "$LAB"
 
+# The NemoClaw installer refuses a group- or world-writable user-local
+# directory; the base image creates $HOME/.local with mode 775.
+mkdir -p "$HOME/.local/bin"
+chmod 755 "$HOME" "$HOME/.local" "$HOME/.local/bin"
+
 # NemoClaw at a fixed commit, agent onboarding and the GPU sandbox.
 "$LAB/host/up.sh"
 
