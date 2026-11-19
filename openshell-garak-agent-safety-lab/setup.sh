@@ -95,6 +95,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: read-write
+    binaries:
+      - path: /usr/local/bin/node
 EOF
 
 {
@@ -279,7 +281,7 @@ ROUTE_BIND="\$(openshell sandbox exec -n asl-agent -- getent hosts host.openshel
 docker rm -f asl-route >/dev/null 2>&1 || true
 docker run -d --name asl-route --restart unless-stopped --network host -e ROUTE_BIND="\$ROUTE_BIND" "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:a105ed7944841854576b0239a5ad54f6ed91c7fc3af564b6d5ff5144c3f75ba9}" node route/relay.mjs
 openshell forward start 9003 asl-agent &
-openshell logs asl-agent --source sandbox --follow | docker run -i --rm -v "$WS/logs:/lab/logs" "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:a105ed7944841854576b0239a5ad54f6ed91c7fc3af564b6d5ff5144c3f75ba9}" node denial-collector/collector.mjs &
+openshell logs asl-agent --source sandbox --tail | docker run -i --rm -v "$WS/logs:/lab/logs" "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:a105ed7944841854576b0239a5ad54f6ed91c7fc3af564b6d5ff5144c3f75ba9}" node denial-collector/collector.mjs &
 EOF
 # Applies lab UI edits; asl-apply.path runs it when a .changed-* marker appears.
 cat > "$WS/bin/asl-apply" <<EOF
