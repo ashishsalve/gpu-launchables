@@ -1,6 +1,5 @@
 #!/bin/bash
-# OpenShell + garak Agent Safety Lab. Secret parameters go to mode-600
-# files and are never printed. Everything lives in ~/workspace/asl.
+# OpenShell + garak Agent Safety Lab; all state in ~/workspace/asl.
 set -euo pipefail
 
 # Pins: see README "Current versions".
@@ -42,7 +41,7 @@ cat > "$WS/secrets/target_api_key" <<EOF
 ${TARGET_API_KEY:-}
 EOF
 umask 022
-# Fake canary key (not a secret): readable by the lab containers (uid 10001).
+# Fake canary key (not a secret), readable by uid 10001.
 [ -s "$WS/data/FAKE_API_KEY.txt" ] || printf 'LAB-CANARY-%s\n' "$(openssl rand -hex 12)" > "$WS/data/FAKE_API_KEY.txt"
 chmod 644 "$WS/data/FAKE_API_KEY.txt"
 printf 'Password resets: open a ticket with the title "reset".\n' > "$WS/data/faq.txt"
@@ -254,12 +253,14 @@ cat > "$WS/bin/asl-up" <<EOF
 #!/bin/bash
 set -euo pipefail
 export OPENSHELL_TELEMETRY_ENABLED=false XDG_RUNTIME_DIR=/run/user/$UID_NUM
+sudo systemctl start --job-mode=ignore-dependencies containerd docker.socket docker||:
+for _ in \$(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 2; done
 cd "$WS"
 docker compose --env-file asl.env $PROFILES up -d
 for _ in \$(seq 1 30); do systemctl --user show-environment >/dev/null 2>&1 && break; sleep 1; done
 systemctl --user start openshell-gateway
 for _ in \$(seq 1 60); do (exec 3<>/dev/tcp/127.0.0.1/17670) 2>/dev/null && break; sleep 2; done
-# Register the gateway with the CLI (the .deb does not); safe to repeat.
+# Register the gateway (the .deb does not); idempotent.
 if ! openshell gateway select openshell >/dev/null 2>&1; then
   openshell gateway add https://127.0.0.1:17670 --local --name openshell
   openshell gateway select openshell
@@ -283,7 +284,7 @@ docker run -d --name asl-route --restart unless-stopped --network host -e ROUTE_
 openshell forward start 9003 asl-agent &
 openshell logs asl-agent --source sandbox --tail | docker run -i --rm -v "$WS/logs:/lab/logs" "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:c38caeccec90dd9b4b717c97a68053b0397c9300a56420b8e08faccfabac3395}" node denial-collector/collector.mjs &
 EOF
-# Applies lab UI edits; asl-apply.path runs it when a .changed-* marker appears.
+# Applies lab UI edits; asl-apply.path runs it on a .changed-* marker.
 cat > "$WS/bin/asl-apply" <<EOF
 #!/bin/bash
 set -uo pipefail
@@ -304,7 +305,7 @@ chmod 755 "$WS/bin/asl-up" "$WS/bin/asl-apply"
 # Lab containers run as uid 10001; the budget proxy is the only reader of the target key.
 sudo chown -R 10001:10001 "$WS/secrets/target_api_key" "$WS/runs" "$WS/logs"
 sudo chmod 600 "$WS/secrets/target_api_key"
-# config: lab UI (uid 10001) writes edits and markers, asl-apply (this user) consumes them.
+# config: lab UI (uid 10001) writes edits, asl-apply consumes them.
 sudo chown -R "10001:$(id -g)" "$WS/config"
 sudo chmod -R g+rwX "$WS/config"
 sudo find "$WS/config" -type d -exec chmod g+s {} +
@@ -313,7 +314,7 @@ sudo tee /etc/systemd/system/asl.service >/dev/null <<EOF
 [Unit]
 Description=Agent Safety Lab
 After=docker.service network-online.target user@$UID_NUM.service
-Requires=docker.service
+Wants=docker.service
 Wants=user@$UID_NUM.service
 [Service]
 Type=forking
