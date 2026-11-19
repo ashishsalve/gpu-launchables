@@ -6,12 +6,12 @@ Launchable ID: env-3MK68pYUXCux61sliWiZiwndcQ0
 
 Run a private agent with [NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw) on one GPU. The agent runs inside an [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandbox and uses one of three open-source agent harnesses: OpenClaw, Hermes Agent or LangChain Deep Agents Code. Its model, NVIDIA Nemotron 3.5 Lightning, is served by [vLLM](https://github.com/vllm-project/vllm) on the same GPU, so no external model API or API key is needed.
 
-1x L40S 48GB, >= 46 GB VRAM | 200 GiB disk | ~$2.23/hr (console 2026-11-18) | ~30 min to ready | Stop to pause, Delete when done
+1x L40S 48GB, >= 46 GB VRAM | 200 GiB disk | ~$2.26/hr (console 2026-11-19) | ~35 min to ready | Stop to pause, Delete when done
 
 Minimum GPU: one 48 GB GPU (L40S class). You can pick other compute on the deploy page; a 96 GB GPU allows MAX_MODEL_LEN 131072.
 
 Current versions: NemoClaw v0.0.144 (commit 82e1ad7), OpenShell v0.0.116, vLLM v0.27.1, Nemotron 3.5 Lightning 30B-A3B NVFP4 (revision bee7596), Node.js v22.23.5, nginx 1.30.7-alpine.
-Last smoke: not yet run.
+Last smoke: 2026-11-19, fresh deploy on 1x L40S (agent ready about 34 minutes after deploy).
 
 ## What you get
 
