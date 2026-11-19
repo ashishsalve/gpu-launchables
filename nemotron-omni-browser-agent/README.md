@@ -77,7 +77,10 @@ curl http://localhost:8000/v1/models
 
 Everything lives under `/home/ubuntu/workspace/browser-agent` (settings, step
 screenshots, the sandbox log) and `/home/ubuntu/workspace/huggingface` (model
-cache). These survive Stop and are removed by Delete.
+cache). Settings, screenshots and the sandbox log survive Stop and are removed
+by Delete. The model cache lives on the instance's local NVMe when the root
+disk is small and is downloaded again after a Stop; when the root disk has room
+it stays.
 
 ## Stop and delete
 
