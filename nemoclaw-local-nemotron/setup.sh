@@ -58,26 +58,7 @@ SERVED_NAME=nemotron-3.5-lightning
 GPU_UTIL=0.90
 MAX_NUM_SEQS=8
 ENV_FILE=$APP/vllm.env
-# >>> wave3:vllm-nemotron.sh@5cff0907c4ad
-# Nemotron 3.5 Lightning 30B-A3B NVFP4 on vLLM, VM form.
-# Paste between the wave3 markers of a #!/bin/bash setup script that already
-# runs under "set -euo pipefail". Set these variables before this block:
-#   NAME          container name and workspace folder, e.g. nemotron-vllm
-#   SERVED_NAME   model name clients send in "model", e.g. nemotron-3.5-lightning
-#   MAX_MODEL_LEN context window in tokens; always bounded (65536 smoked on L40S)
-#   GPU_UTIL      vLLM --gpu-memory-utilization; 0.90 when vLLM has the GPU alone
-#   MAX_NUM_SEQS  explicit --max-num-seqs; the vLLM default (1024) can exceed the
-#                 Mamba cache blocks of this hybrid model and fail at startup
-#   ENV_FILE      mode 0600 file holding HF_TOKEN=<token> or nothing; docker reads
-#                 it, the token never appears on a command line or in output
-#   VLLM_READY_BUDGET_S  optional; seconds to wait for /health (default 1800)
-# The API listens on 127.0.0.1:8000 of the instance only (OpenAI-compatible,
-# base URL http://127.0.0.1:8000/v1). Weights are cached under
-# /home/ubuntu/workspace/${NAME}/huggingface: kept on stop, removed on delete.
-# Callers: send max_tokens >= 4096. The model reasons before it answers, and a
-# 512-token cap returns reasoning only, with no answer.
-# Never add --trust-remote-code: this checkpoint does not need it.
-
+# >>> wave3:vllm-nemotron.sh@c7b48f942730
 : "${NAME:?NAME is not set}"
 : "${SERVED_NAME:?SERVED_NAME is not set}"
 : "${MAX_MODEL_LEN:?MAX_MODEL_LEN is not set}"
@@ -325,8 +306,9 @@ sg docker -c "'$APP_DIR/recover.sh'" || { echo "Agent sandbox not ready" >&2; ex
 sg docker -c "'$APP_DIR/recover.sh' --check" || { echo "Agent sandbox readiness check failed" >&2; exit 1; }
 echo "NemoClaw sandbox ready"
 # <<< wave3:nemoclaw-bootstrap.sh
-sudo sed -i s/^Requires/Wants/ /etc/systemd/system/$SANDBOX_NAME-recover.service
-sed -i -e 's/lo 8080 0/& \&\& [ "$(ss -Hltn sport = :18780)" ]/' -e '2a [ $(id -gn) = docker ]||{ sudo systemctl start --job-mode=ignore-dependencies containerd docker.socket docker||:;exec sg docker -c "$0 $*";}' -e '/|| nemoclaw/i "$APP_DIR/post-recover.sh" pre' "$APP/recover.sh"
-[ "$(grep -c ':18780)\|exec sg\|sh" pre$' "$APP/recover.sh")" = 3 ]||{ echo "Patch failed" >&2;exit 1;}
+sudo sed -i -e s/^Requires/Wants/ -e '/^Des/a StartLimitIntervalSec=1h\nStartLimitBurst=4' -e '/^Ty/a Restart=on-failure\nRestartSec=30' /etc/systemd/system/$SANDBOX_NAME-recover.service
+sudo systemctl daemon-reload
+sed -i -e 's/lo 8080 0/& \&\& [ "$(ss -Hltn sport = :18780)" ]/' -e '2a [ $(id -gn) = docker ]||{ sudo systemctl start --job-mode=ignore-dependencies containerd docker.socket docker||:;exec sg docker -c "$0 $*";}' -e '/|| nemoclaw/i for _ in {1..36};do openshell sandbox list&>/dev/null&&break;sleep 5;done;"$APP_DIR/post-recover.sh" pre' -e 's/|| \(nemoclaw "$SANDBOX_NAME" \)recover\(.*\) ||/&{ \1start\2\&\&\1recover\2;}||/' "$APP/recover.sh"
+[ "$(grep -c ':18780)\|exec sg\|36.*sh" pre$\|{ nemoclaw.* start .*;}||' "$APP/recover.sh")" = 4 ]||{ echo "Patch failed" >&2;exit 1;}
 "$APP/recover.sh" --check||{ echo "Agent not ready" >&2;exit 1;}
 echo "$DONE"
