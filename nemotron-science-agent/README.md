@@ -2,11 +2,15 @@
 
 A local science agent on one GPU. [Hermes Agent](https://github.com/NousResearch/hermes-agent) drives [GROMACS](https://www.gromacs.org) molecular dynamics and [RDKit](https://github.com/rdkit/rdkit) cheminformatics through a fixed set of tools, using [NVIDIA Nemotron 3.5 Super VL](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4) served by [vLLM](https://github.com/vllm-project/vllm) on your instance. [Open WebUI](https://github.com/open-webui/open-webui) is the chat interface. Everything starts together with Docker Compose.
 
-1x RTX PRO 6000 96GB, >= 90 GB VRAM | 300 GiB disk | ~$4.80/hr (console 2026-11-15) | ~45 min to ready | Stop to pause, Delete when done
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3MJzeo3flqm6QKSzSPh2NZEdvYR)
+
+Launchable ID: env-3MJzeo3flqm6QKSzSPh2NZEdvYR
+
+1x RTX PRO 6000 96GB, >= 92 GB VRAM | 300 GiB disk | ~$4.80/hr (console 2026-11-19) | ~30 min to ready | Stop to pause, Delete when done
 
 Current versions: vllm/vllm-openai:v0.32.0, ghcr.io/open-webui/open-webui:v0.13.3, Hermes Agent v0.23.2, GROMACS 2026.4, RDKit 2026.9.2, model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4
 
-Last smoke: not yet run.
+Last smoke: 2026-11-19, fresh deploy on the default instance (all services healthy about 29 minutes after deploy).
 
 ## What you get
 
@@ -21,6 +25,8 @@ The default configuration is set up for one RTX PRO 6000 with 96 GB of GPU memor
 ## Try these three tasks
 
 See [docs/tasks.md](docs/tasks.md) for the exact prompts.
+
+Run one long task at a time. If a tool reports it is paused, wait about a minute and retry: after a few failed tool calls the agent pauses the science tools for about a minute, for every open chat.
 
 1. **Repair the GROMACS suite.** Ask the agent to repair all five cases. For each one the agent is asked to read the inputs, fix them, and run `gmx grompp` and a 10 ps GPU `gmx mdrun`.
 2. **Rank molecules with RDKit.** Give five SMILES strings and ask for a ranking by drug-likeness; then ask it to run the LitmusBench check.
@@ -70,6 +76,7 @@ This folder survives a stop and start. It is removed when the instance is delete
 ## Stop and delete
 
 - **Stop** the instance when you are not using it. Data is kept and the containers come back on the next start. Storage is still billed while stopped.
+- After **Start**, the model takes about 15 minutes to load; the other services are back in about 2 minutes. The weights are not downloaded again.
 - **Delete** the instance when you are finished. This removes the instance and all data.
 
 ## Troubleshooting

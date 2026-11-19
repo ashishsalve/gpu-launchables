@@ -1,5 +1,7 @@
 # Three tasks to try
 
+Run one long task at a time; if a tool reports it is paused, wait about a minute and retry.
+
 ## 1. Repair the GROMACS suite
 
 Prompt:
