@@ -6,7 +6,7 @@ Launchable ID: env-3MJyaXnnzyUwmC2pfHx1ibrlg6C
 
 Speed up slow PyTorch, NumPy or CUDA code with a third-party open-source coding agent (LangChain Deep Agents Code) running in an NVIDIA OpenShell sandbox. The agent writes CUDA, Triton or cuTile kernels, checks them with compute-sanitizer, profiles them with Nsight Compute and Nsight Systems, and benchmarks them on this GPU. The model, NVIDIA Nemotron 3.5 Lightning, is served by vLLM on the same GPU; no external model API is used.
 
-1x L40S 48GB, >= 48 GB VRAM | 250 GiB disk | ~$2.23/hr (console 2026-11-15) | Stop to pause, Delete when done
+1x L40S 48GB, >= 48 GB VRAM | 250 GiB disk | ~$2.26/hr (console 2026-11-19) | ~30 min to ready | Stop to pause, Delete when done
 
 Minimum GPU: one NVIDIA L40S 48GB. You can pick other compute at deploy time. vLLM is configured with `--gpu-memory-utilization 0.55`, so it reserves 55 percent of GPU memory for the model and leaves the rest for kernel work in the sandbox.
 
@@ -30,7 +30,7 @@ Speedups shown in the report are measured on your instance by the bench harness.
 
 ## How it works
 
-- vLLM serves the model as `coder` on localhost:8000 of the instance.
+- vLLM serves the model as `coder` on localhost:8000 of the instance. The agent reaches it through NemoClaw's managed inference route, which OpenShell forwards to that local vLLM server; no external model API is used.
 - NVIDIA NemoClaw installs OpenShell and onboards the agent into the `kernel-lab` sandbox with GPU access. Setup then applies the lab's own sandbox policy and stops if that policy is not the one loaded. Sandbox network egress is denied by default; the only allowed route is to the model.
 - The sandbox reaches the model through a small nginx proxy that listens only on the Docker bridge address of the instance and forwards to vLLM on localhost; vLLM itself never listens on an external address.
 - The sandbox is not given the host workspace or the host scripts; at most the results folder `/home/ubuntu/workspace/kernel-lab/results` is shared with it. Agent telemetry is turned off.
@@ -58,7 +58,7 @@ Labs, results and the model cache live in `/home/ubuntu/workspace` (`/home/ubunt
 
 ## Stop and delete
 
-Stop pauses the instance; disk storage is still billed while stopped. Start brings vLLM, the sandbox, code-server and the report back on their own. Delete removes the instance and everything on it.
+Stop pauses the instance; disk storage is still billed while stopped. Delete removes the instance and everything on it. After Start, if a link shows an error, run `sudo systemctl restart kernel-lab.service kernel-report.service code-server-lab.service` in the Brev terminal and wait a few minutes.
 
 ## Troubleshooting
 
@@ -72,7 +72,7 @@ The agent runs code it writes. It is confined to the sandbox filesystem and netw
 
 Current versions: vLLM v0.27.1; Nemotron 3.5 Lightning 30B-A3B NVFP4 revision bee7596; CUDA 13.5.0 devel (Ubuntu 24.04); Nsight Compute and Nsight Systems 13.5.0; PyTorch 2.15.0 (cu132); Triton 3.9.0; cuTile 1.8.1; CuPy 14.2.0; code-server 4.145.2; NVIDIA skills e8f43c1.
 
-Last smoke: not yet run
+Last smoke: 2026-11-19, fresh deploy on AWS with 1x L40S: setup completed, the agent answered from the local model inside the GPU sandbox, and both links required their passwords.
 
 ## Credits and licences
 
