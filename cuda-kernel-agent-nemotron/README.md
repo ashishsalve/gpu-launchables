@@ -12,7 +12,8 @@ Minimum GPU: one NVIDIA L40S 48GB. You can pick other compute at deploy time. vL
 
 ## What you get
 
-- **open-code-server** link (the main button): a browser VS Code (code-server) whose default terminal opens inside the sandbox with the agent ready. code-server itself runs on the instance, not in the sandbox: its editor and any new terminal profile give full access to the instance (host files, Docker and sudo). It is protected by the Brev Secure Link login; do not share the link.
+- **open-code-server** link (the main button): a browser VS Code (code-server) whose default terminal opens inside the sandbox with the agent ready. code-server itself runs on the instance, not in the sandbox: its editor and any new terminal profile give full access to the instance (host files, Docker and sudo). It is protected by the Brev Secure Link login and a password generated at setup; do not share the link or the password.
+  code-server asks for a password: in the Brev terminal run `grep ^password ~/.config/code-server/config.yaml`.
 - **open-kernel-report** link: the Kernel Report, a page listing each task run with baseline time, kernel time, measured speedup, test result, sanitizer result and Nsight Compute summary, with downloads.
 - A sandbox with the CUDA toolkit (nvcc, compute-sanitizer), Nsight Compute, Nsight Systems, PyTorch, Triton, cuTile and CuPy, plus five pinned NVIDIA CUDA agent skills for cuTile and Triton kernel work.
 
@@ -32,7 +33,7 @@ Speedups shown in the report are measured on your instance by the bench harness.
 - NVIDIA NemoClaw installs OpenShell and onboards the agent into the `kernel-lab` sandbox with GPU access. Setup then applies the lab's own sandbox policy and stops if that policy is not the one loaded. Sandbox network egress is denied by default; the only allowed route is to the model.
 - The sandbox reaches the model through a small nginx proxy that listens only on the Docker bridge address of the instance and forwards to vLLM on localhost; vLLM itself never listens on an external address.
 - The sandbox is not given the host workspace or the host scripts; at most the results folder `/home/ubuntu/workspace/kernel-lab/results` is shared with it. Agent telemetry is turned off.
-- code-server (13337) and the Kernel Report (3000) bind to localhost and are reached only through Brev Secure Links.
+- code-server (13337) and the Kernel Report (3000) listen on all interfaces of the instance so that Brev Secure Links can connect to them; open them through the Secure Links. code-server requires its password.
 
 ## Settings
 

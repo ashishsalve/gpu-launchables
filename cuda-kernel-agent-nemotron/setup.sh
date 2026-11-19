@@ -12,8 +12,9 @@
 #                  a mode 600 file and never printed
 #
 # Everything lives under /home/ubuntu/workspace (survives Stop, removed by
-# Delete). Only code-server (13337) and the Kernel Report (3000) are reached
-# through Brev Secure Links; every service binds to localhost.
+# Delete). code-server (13337, password login) and the Kernel Report (3000)
+# listen on all interfaces so Brev Secure Links can reach them; vLLM stays on
+# localhost and the model proxy on the Docker bridge address only.
 set -euo pipefail
 
 AGENT="${AGENT:-deepagents-code}"
@@ -156,11 +157,27 @@ if ! dpkg-query -W -f '${Version}' code-server 2>/dev/null | grep -qx "$CODE_SER
   rm -f "$DEB"
 fi
 mkdir -p "$HOME/.config/code-server" "$HOME/.local/share/code-server/User"
-cat > "$HOME/.config/code-server/config.yaml" <<EOF
-bind-addr: 127.0.0.1:13337
-auth: none
+# code-server listens on all interfaces because the Brev Secure Link tunnel
+# connects on a non-loopback address; a password generated here protects it.
+# The password is kept on re-run (never rotated) and never printed.
+CS_CONF="$HOME/.config/code-server/config.yaml"
+CS_PW=""
+if [ -f "$CS_CONF" ]; then
+  CS_PW="$(sed -n 's/^password: //p' "$CS_CONF")"
+fi
+if [ -z "$CS_PW" ]; then
+  CS_PW="$(head -c 32 /dev/urandom | base64 | tr -dc A-Za-z0-9 | cut -c1-24)"
+fi
+umask 077
+cat > "$CS_CONF" <<EOF
+bind-addr: 0.0.0.0:13337
+auth: password
+password: $CS_PW
 cert: false
 EOF
+chmod 600 "$CS_CONF"
+umask 022
+unset CS_PW
 cat > "$HOME/.local/share/code-server/User/settings.json" <<EOF
 {
   "terminal.integrated.profiles.linux": { "kernel-lab": { "path": "$LAB/host/attach.sh" } },
@@ -191,13 +208,13 @@ WantedBy=multi-user.target
 EOF
 unit kernel-report <<EOF
 [Unit]
-Description=Kernel Report (localhost:3000)
+Description=Kernel Report (port 3000, Brev Secure Link)
 After=network-online.target
 
 [Service]
 User=$ME
 ExecStartPre=/usr/bin/python3 $LAB/host/generate.py $LAB/results $LAB/report-site
-ExecStart=/usr/bin/python3 -m http.server 3000 --bind 127.0.0.1 --directory $LAB/report-site
+ExecStart=/usr/bin/python3 -m http.server 3000 --bind 0.0.0.0 --directory $LAB/report-site
 Restart=always
 
 [Install]
@@ -205,7 +222,7 @@ WantedBy=multi-user.target
 EOF
 unit code-server-lab <<EOF
 [Unit]
-Description=code-server (localhost:13337)
+Description=code-server (port 13337, Brev Secure Link)
 After=network-online.target
 
 [Service]
