@@ -1,5 +1,9 @@
 # RAPIDS Data Science Agent with Hermes
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3MK00FdEhqj8HhqutQYrm896chK)
+
+Launchable ID: env-3MK00FdEhqj8HhqutQYrm896chK
+
 Ask a data question in plain English and Hermes Agent writes and runs a GPU notebook for you with NVIDIA RAPIDS (cuDF, cuML and cuGraph), guided by NVIDIA Agent Skills. Hermes Agent is an open-source agent by Nous Research. The NVIDIA Nemotron 3.5 Lightning model runs on the same GPU with vLLM; no hosted model key is used.
 
 Default GPU: one NVIDIA L40S 48GB. The model server and RAPIDS share that GPU.
