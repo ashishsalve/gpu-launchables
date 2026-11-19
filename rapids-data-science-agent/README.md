@@ -1,5 +1,11 @@
 # RAPIDS Data Science Agent with Hermes
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3MK00FdEhqj8HhqutQYrm896chK)
+
+Launchable ID: env-3MK00FdEhqj8HhqutQYrm896chK
+
+1x L40S 48GB, >= 48 GB VRAM | 200 GiB disk | ~$2.26/hr (console 2026-11-19) | ~30 min to ready | Stop to pause, Delete when done
+
 Ask a data question in plain English and Hermes Agent writes and runs a GPU notebook for you with NVIDIA RAPIDS (cuDF, cuML and cuGraph), guided by NVIDIA Agent Skills. Hermes Agent is an open-source agent by Nous Research. The NVIDIA Nemotron 3.5 Lightning model runs on the same GPU with vLLM; no hosted model key is used.
 
 Default GPU: one NVIDIA L40S 48GB. The model server and RAPIDS share that GPU.
@@ -74,7 +80,7 @@ See [docs/skills.md](docs/skills.md) for the installed skills and how to add you
 
 Current versions: vLLM v0.27.1; NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 (revision bee7596271d1495f6992ae224aefde4410e816b8); RAPIDS 26.10 (rapidsai/notebooks:26.10-cuda12-py3.12); XGBoost 3.4.2 CUDA; Hermes Agent v0.23.2 (ae2a81ccc00e9b7c06301523e5bb09608397149c) installed with uv 0.13.5; NVIDIA Agent Skills at commit e8f43c17b6ed0e8888ad21a447f63b0617849f71.
 
-Last smoke: not yet run
+Last smoke: 2026-11-19 (fresh deploy on 1x L40S; stop and start checked).
 
 ## Credits and licences
 
