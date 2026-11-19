@@ -1,12 +1,16 @@
 # Hermes Agent on Nemotron 3.5 Bolt
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3MJcLXd8Xhlag4dhPLll5pTHrJV)
+
+Launchable ID: env-3MJcLXd8Xhlag4dhPLll5pTHrJV
+
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) is an open-source agent from Nous Research that browses the web, runs terminal commands and saves what it learns as reusable skills. This Launchable runs it next to [NVIDIA Nemotron 3.5 Bolt](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB), served on the same instance by [llama.cpp](https://github.com/ggml-org/llama.cpp) through an OpenAI-compatible API. On first start the stack writes a Hermes configuration that points the agent at this local model; no hosted model API key is set.
 
-Default compute: one NVIDIA L4 24GB. You can pick a different GPU on the deploy page.
+Default compute: one NVIDIA L4 24GB, 256 GiB disk. The first deploy is ready in about 18 minutes. You can pick a different GPU on the deploy page.
 
 Current versions: Hermes Agent v0.23.2, llama.cpp b12464, NVIDIA-Nemotron-3.5-Bolt-E4B-4GB (default model), NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-GGUF (option)
 
-Last smoke: not yet run
+Last smoke: 2026-11-19, fresh deploy on GCP g2-standard-8 (1x L4): ready in about 18 minutes; services came back on their own after Stop and Start
 
 ## What you get
 
@@ -49,14 +53,15 @@ curl http://localhost:8080/v1/models
 
 - Models: `/home/ubuntu/workspace/hermes-bolt/models`
 - Hermes data directory (`/opt/data` in the container) and the stored password: `/home/ubuntu/workspace/hermes-bolt/hermes`
+- Files the agent creates in its home folder (`/opt/data/home` in the container), such as the project cloned in the terminal task: `/home/ubuntu/workspace/hermes-bolt/hermes/home`
 
-Both folders are under the Brev workspace directory, which Brev keeps when the instance is stopped and removes when the instance is deleted.
+These folders are under the Brev workspace directory, which Brev keeps when the instance is stopped and removes when the instance is deleted.
 
 The model is downloaded on first start and checked by size, and the default model also by sha256. If a file of the expected size is already on disk, it is not downloaded again.
 
 ## Stop and delete
 
-- **Stop** the instance from the Brev console when you are not using it. Both services use the `unless-stopped` restart policy and read their settings from the workspace folders above.
+- **Stop** the instance from the Brev console when you are not using it. Both services use the `unless-stopped` restart policy and read their settings from the workspace folders above. In the last smoke, both services came back on their own after Start, without re-entering parameters or downloading the model again.
 - **Delete** the instance when you are finished. This removes the instance and all of its data, including models and skills.
 
 ## Troubleshooting
@@ -71,7 +76,7 @@ The model is downloaded on first start and checked by size, and the default mode
 
 ## Acceptable use and safety
 
-Hermes executes the commands the model proposes, with network access, inside its container. Review what it does, keep the dashboard password private, and do not give the agent credentials you would not hand to a new colleague. Use the model within the terms of its licence.
+Hermes executes the commands the model proposes, with network access, inside its container. Review what it does, keep the dashboard password private, and do not give the agent credentials you would not hand to a new colleague. Check the agent's answers against their sources. Use the model within the terms of its licence.
 
 ## Credits and licences
 
