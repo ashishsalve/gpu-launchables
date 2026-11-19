@@ -16,7 +16,6 @@ cat > "$APP/post-recover.sh" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 if [ "${1:-}" = pre ];then
-# 11435 guard; proxy restart
 for t in iptables $(command -v ip6tables||:);do for r in "! -i lo -j DROP" "-i br-+ -j ACCEPT" "-i docker0 -j ACCEPT";do R="PREROUTING -t raw -p tcp --dport 11435 $r";sudo $t -C $R 2>/dev/null||sudo $t -I $R;done;done
 l(){ [ -n "$(ss -Hltn sport = :11435)" ];}
 cd ~/.nemoclaw&&[ -s ollama-proxy-token ]||{ echo "proxy: skip";exit;}
@@ -49,8 +48,8 @@ cat > "$APP/nginx.conf" <<EOF
 events {}
 http {
 map \$http_upgrade \$conn { default upgrade; '' close; }
-map \$http_origin \$po { default ''; "~^https://[a-z0-9-]+\.brevlab\.com\$" http://127.0.0.1:$UP; }
-map "\$http_origin|\$request_method" \$deny { default 1; "|GET" 0; "~^https://[a-z0-9-]+\.brevlab\.com\|" 0; }
+map \$http_origin \$po { default ''; "~^https://[a-z0-9-]+\.(gobrev\.dev|brevlab\.com)\$" http://127.0.0.1:$UP; }
+map "\$http_origin|\$request_method" \$deny { default 1; "|GET" 0; "~^https://[a-z0-9-]+\.(gobrev\.dev|brevlab\.com)\|" 0; }
 server { listen 127.0.0.1:18780; location / { $LOC } }
 }
 EOF
