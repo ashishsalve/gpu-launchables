@@ -1,6 +1,10 @@
 # OpenShell + garak Agent Safety Lab
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=LAUNCHABLE_ID_PENDING)
+
 Red team a tool-using AI agent with [garak](https://github.com/NVIDIA/garak), then stop the attacks with [NeMo Guardrails](https://github.com/NVIDIA-NeMo/Guardrails) and an [OpenShell](https://github.com/NVIDIA/OpenShell) sandbox. The agent runs on NVIDIA Nemotron 3.5 Lightning served by [vLLM](https://github.com/vllm-project/vllm) on this GPU; no hosted model endpoint is used.
+
+Launchable ID: LAUNCHABLE_ID_PENDING
 
 Default GPU: 1x NVIDIA L40S 48GB.
 
