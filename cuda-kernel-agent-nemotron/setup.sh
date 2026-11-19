@@ -24,10 +24,11 @@ HF_TOKEN="${HF_TOKEN:-}"
 
 MODEL_REVISION="bee7596271d1495f6992ae224aefde4410e816b8"
 # Sandbox image built from this Launchable's image directory, pinned by digest.
-SANDBOX_DIGEST="49e43a9670641d2f68502662971e8ebfc53919833df213cd27fdff68eb69f48e"
-SANDBOX_REF="ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-e2307ba@sha256:$SANDBOX_DIGEST"
+SANDBOX_DIGEST="d1d6c6e2624225529974740c8f8146592a29e2cc821ce638579072892dc5fe48"
+SANDBOX_REF="ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-0ea8881@sha256:$SANDBOX_DIGEST"
 NEMOCLAW_SHA="82e1ad7474ec7175c5b860b2bfa9d7940bc6e75f"
 NEMOCLAW_INSTALL_SHA256="662dfc66b84c4507a6c1a3cc5429ab9ace6034c26a44ed84d446451e32db57d4"
+MANAGED_DOCKERFILE_SHA256="02b0922d2c46db13e5231b82257f4c172974675eacf283a6baa633dc271ba2ef"
 NODE_VERSION="22.23.5"
 NODE_SHA256="cdeb8670a0c81f51b4dc4ac61919f9b1ad917b304bf8221eb939570663d240f8"
 PROXY_PORT="8100"
@@ -46,7 +47,7 @@ fi
 case "$AGENT" in deepagents-code) ;; *) echo "Unsupported AGENT: $AGENT" >&2; exit 1 ;; esac
 case "$MODEL" in nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) ;; *) echo "Unsupported MODEL: $MODEL" >&2; exit 1 ;; esac
 case "$MAX_MODEL_LEN" in 65536|32768|131072) ;; *) echo "Unsupported MAX_MODEL_LEN: $MAX_MODEL_LEN" >&2; exit 1 ;; esac
-for v in SANDBOX_DIGEST NEMOCLAW_SHA NEMOCLAW_INSTALL_SHA256 NODE_VERSION NODE_SHA256; do
+for v in SANDBOX_DIGEST NEMOCLAW_SHA NEMOCLAW_INSTALL_SHA256 MANAGED_DOCKERFILE_SHA256 NODE_VERSION NODE_SHA256; do
   [ -n "${!v}" ] || { echo "Release pin $v is not set in this script" >&2; exit 1; }
 done
 
@@ -68,9 +69,10 @@ cat > "$TMP_ENV" <<EOF
 AGENT=$AGENT
 MODEL=$MODEL
 MAX_MODEL_LEN=$MAX_MODEL_LEN
-SANDBOX_REF=$SANDBOX_REF
+BASE_REF=$SANDBOX_REF
 NEMOCLAW_SHA=$NEMOCLAW_SHA
 NEMOCLAW_INSTALL_SHA256=$NEMOCLAW_INSTALL_SHA256
+MANAGED_DOCKERFILE_SHA256=$MANAGED_DOCKERFILE_SHA256
 NODE_VERSION=$NODE_VERSION
 NODE_SHA256=$NODE_SHA256
 PROXY_PORT=$PROXY_PORT
@@ -131,11 +133,11 @@ if ! sudo docker inspect model-proxy >/dev/null 2>&1; then
 fi
 
 # Sandbox image at a fixed digest; host scripts are copied out of it.
-[ "$SANDBOX_REF" = "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-e2307ba@sha256:$SANDBOX_DIGEST" ] || { echo "Sandbox image reference mismatch" >&2; exit 1; }
-sudo docker pull "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-e2307ba@sha256:49e43a9670641d2f68502662971e8ebfc53919833df213cd27fdff68eb69f48e"
+[ "$SANDBOX_REF" = "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-0ea8881@sha256:$SANDBOX_DIGEST" ] || { echo "Sandbox image reference mismatch" >&2; exit 1; }
+sudo docker pull "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-0ea8881@sha256:d1d6c6e2624225529974740c8f8146592a29e2cc821ce638579072892dc5fe48"
 GOT="$(sudo docker image inspect --format '{{join .RepoDigests " "}}' "$SANDBOX_REF")"
 case " $GOT " in *"@sha256:$SANDBOX_DIGEST "*) ;; *) echo "Sandbox image digest does not match the pinned digest" >&2; exit 1 ;; esac
-CID="$(sudo docker create "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-e2307ba@sha256:49e43a9670641d2f68502662971e8ebfc53919833df213cd27fdff68eb69f48e")"
+CID="$(sudo docker create "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-0ea8881@sha256:d1d6c6e2624225529974740c8f8146592a29e2cc821ce638579072892dc5fe48")"
 sudo docker cp "$CID:/opt/kernel-lab/host/." "$LAB/host/"
 sudo docker rm "$CID" >/dev/null
 sudo chown -R "$ME:$ME" "$LAB"
@@ -168,6 +170,8 @@ fi
 if [ -z "$CS_PW" ]; then
   CS_PW="$(head -c 32 /dev/urandom | base64 | tr -dc A-Za-z0-9 | cut -c1-24)"
 fi
+touch "$CS_CONF"
+chmod 600 "$CS_CONF"
 umask 077
 cat > "$CS_CONF" <<EOF
 bind-addr: 0.0.0.0:13337

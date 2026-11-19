@@ -34,7 +34,7 @@ Speedups shown in the report are measured on your instance by the bench harness.
 - NVIDIA NemoClaw installs OpenShell and onboards the agent into the `kernel-lab` sandbox with GPU access. Setup then applies the lab's own sandbox policy and stops if that policy is not the one loaded. Sandbox network egress is denied by default; the only allowed route is to the model.
 - The sandbox reaches the model through a small nginx proxy that listens only on the Docker bridge address of the instance and forwards to vLLM on localhost; vLLM itself never listens on an external address.
 - The sandbox is not given the host workspace or the host scripts; at most the results folder `/home/ubuntu/workspace/kernel-lab/results` is shared with it. Agent telemetry is turned off.
-- code-server (13337) and the Kernel Report (3000) listen on all interfaces of the instance so that Brev Secure Links can connect to them; open them through the Secure Links. code-server requires its password.
+- code-server (13337) and the Kernel Report (3000) listen on all interfaces of the instance so that Brev Secure Links can connect to them; open them through the Secure Links. code-server requires its password. The Kernel Report also requires a login: user report, with the password in `~/.config/kernel-report/password`.
 
 ## Settings
 
