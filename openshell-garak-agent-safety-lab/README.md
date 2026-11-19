@@ -1,12 +1,14 @@
 # OpenShell + garak Agent Safety Lab
 
-[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=LAUNCHABLE_ID_PENDING)
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3MK1o9MUGMtZElFZvoYphMsZUmB)
 
 Red team a tool-using AI agent with [garak](https://github.com/NVIDIA/garak), then stop the attacks with [NeMo Guardrails](https://github.com/NVIDIA-NeMo/Guardrails) and an [OpenShell](https://github.com/NVIDIA/OpenShell) sandbox. The agent runs on NVIDIA Nemotron 3.5 Lightning served by [vLLM](https://github.com/vllm-project/vllm) on this GPU; no hosted model endpoint is used.
 
-Launchable ID: LAUNCHABLE_ID_PENDING
+Launchable ID: env-3MK1o9MUGMtZElFZvoYphMsZUmB
 
 Default GPU: 1x NVIDIA L40S 48GB.
+
+1x L40S 48GB, >= 48 GB VRAM | 200 GiB disk | ~$2.23/hr (console 2026-11-19) | ~20 min to ready | Stop to pause, Delete when done
 
 ## What you get
 
@@ -55,6 +57,8 @@ Everything lives in `/home/ubuntu/workspace/asl`: model cache, configs, runs and
 
 Stop pauses the instance; the lab restarts on Start without re-entering settings. Disk storage is billed while stopped. Delete removes the instance and all data.
 
+If the lab does not come back after Start, run: sudo systemctl restart asl.service
+
 ## Troubleshooting
 
 ```
@@ -71,7 +75,7 @@ Scan only systems you own or are authorised to test. garak sends adversarial pro
 
 Current versions: vLLM v0.27.1 (model) and v0.20.2 (content safety option); Nemotron 3.5 Lightning 30B-A3B NVFP4 revision bee7596271d1495f6992ae224aefde4410e816b8; garak 0.17.1; NeMo Guardrails 0.24.1; NemoGuard JailbreakDetect revision cc8b97e2bd6c1667c31476eedaa9a75b4d7ed282; snowflake-arctic-embed-m-long revision 92d97331f1f4b6a366c1f161354b9f3390cc219f; OpenShell v0.0.116; Python 3.12.16; NeMo Guardrails server and jailbreak detector Python packages installed from the hash-pinned locks `~/workspace/asl/pip/gr.lock` and `~/workspace/asl/pip/jbd.lock`.
 
-Last smoke: not yet run
+Last smoke: 2026-11-19, fresh deploy on AWS with 1x L40S: all five lab checks green and the full raw, guarded and sandbox job completed.
 
 ## Credits and licences
 
