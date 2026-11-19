@@ -1,0 +1,57 @@
+Nemotron Omni Browser Agent
+Copyright 2026 The gpu-launchables authors
+
+The files in this folder (README.md, setup.sh and docs/) are licensed under
+the MIT License, reproduced in full below.
+
+Third-party software
+--------------------
+This environment does not include or modify upstream source code. At deploy
+time it downloads and runs the following upstream projects, each distributed
+under its own license:
+
+- NVIDIA OpenShell - https://github.com/NVIDIA/OpenShell (v0.1.9) - Apache
+  License 2.0.
+- vLLM - https://github.com/vllm-project/vllm - Apache License 2.0.
+  Image: vllm/vllm-openai
+- Playwright MCP - https://github.com/microsoft/playwright-mcp (0.0.85) -
+  Apache License 2.0.
+- Playwright - https://github.com/microsoft/playwright - Apache License 2.0.
+- Chromium - https://www.chromium.org - BSD 3-Clause License and the licenses
+  of its third-party components.
+- noVNC - https://github.com/novnc/noVNC (1.6.0) - Mozilla Public License 2.0.
+- websockify - https://github.com/novnc/websockify (0.13.0) - GNU Lesser
+  General Public License 3.0.
+- x11vnc and Xvfb - Debian packages - GNU General Public License 2.0 and the
+  X11 (MIT) License respectively.
+- nginx - https://nginx.org - BSD 2-Clause License. Image: nginx
+- FastAPI - https://github.com/fastapi/fastapi - MIT License.
+- Uvicorn - https://github.com/encode/uvicorn - BSD 3-Clause License.
+
+Model licences
+--------------
+The model is downloaded from Hugging Face at first start and is not part of
+this repository. Read the model card before use.
+
+- nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8 - NVIDIA Open Model
+  Agreement. Licensed by NVIDIA Corporation.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
