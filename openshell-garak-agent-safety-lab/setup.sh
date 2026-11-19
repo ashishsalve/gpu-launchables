@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # Pins: see README "Current versions".
-LAB_IMAGE="ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:a105ed7944841854576b0239a5ad54f6ed91c7fc3af564b6d5ff5144c3f75ba9"
+LAB_IMAGE="ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:c38caeccec90dd9b4b717c97a68053b0397c9300a56420b8e08faccfabac3395"
 VLLM_IMAGE="vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967"
 VLLM_SAFETY_IMAGE="vllm/vllm-openai:v0.20.2@sha256:70a098d90dbab428a001d9e852fc0fc8d67da5beb03e7851a22247653bf35923"
 PY_IMAGE="python:3.12.16-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df"
@@ -48,8 +48,8 @@ chmod 644 "$WS/data/FAKE_API_KEY.txt"
 printf 'Password resets: open a ticket with the title "reset".\n' > "$WS/data/faq.txt"
 
 # Guardrails and jailbreak detector hash locks ship in the lab image.
-sudo docker run --rm --entrypoint cat "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:a105ed7944841854576b0239a5ad54f6ed91c7fc3af564b6d5ff5144c3f75ba9}" /lab/app/pip/gr.lock > "$WS/pip/gr.lock"
-sudo docker run --rm --entrypoint cat "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:a105ed7944841854576b0239a5ad54f6ed91c7fc3af564b6d5ff5144c3f75ba9}" /lab/app/pip/jbd.lock > "$WS/pip/jbd.lock"
+sudo docker run --rm --entrypoint cat "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:c38caeccec90dd9b4b717c97a68053b0397c9300a56420b8e08faccfabac3395}" /lab/app/pip/gr.lock > "$WS/pip/gr.lock"
+sudo docker run --rm --entrypoint cat "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:c38caeccec90dd9b4b717c97a68053b0397c9300a56420b8e08faccfabac3395}" /lab/app/pip/jbd.lock > "$WS/pip/jbd.lock"
 
 # OpenShell CLI and gateway: shared wave3 installer (release .deb, sha256 checked).
 # >>> wave3:openshell-install.sh@630e898da6a4
@@ -279,9 +279,9 @@ for f in FAKE_API_KEY.txt faq.txt; do
 done
 ROUTE_BIND="\$(openshell sandbox exec -n asl-agent -- getent hosts host.openshell.internal | cut -d' ' -f1)"
 docker rm -f asl-route >/dev/null 2>&1 || true
-docker run -d --name asl-route --restart unless-stopped --network host -e ROUTE_BIND="\$ROUTE_BIND" "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:a105ed7944841854576b0239a5ad54f6ed91c7fc3af564b6d5ff5144c3f75ba9}" node route/relay.mjs
+docker run -d --name asl-route --restart unless-stopped --network host -e ROUTE_BIND="\$ROUTE_BIND" "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:c38caeccec90dd9b4b717c97a68053b0397c9300a56420b8e08faccfabac3395}" node route/relay.mjs
 openshell forward start 9003 asl-agent &
-openshell logs asl-agent --source sandbox --tail | docker run -i --rm -v "$WS/logs:/lab/logs" "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:a105ed7944841854576b0239a5ad54f6ed91c7fc3af564b6d5ff5144c3f75ba9}" node denial-collector/collector.mjs &
+openshell logs asl-agent --source sandbox --tail | docker run -i --rm -v "$WS/logs:/lab/logs" "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:c38caeccec90dd9b4b717c97a68053b0397c9300a56420b8e08faccfabac3395}" node denial-collector/collector.mjs &
 EOF
 # Applies lab UI edits; asl-apply.path runs it when a .changed-* marker appears.
 cat > "$WS/bin/asl-apply" <<EOF
