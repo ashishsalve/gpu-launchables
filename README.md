@@ -32,3 +32,6 @@ These environments are for developers, researchers and teams who want a working 
 | Nemotron Science Agent (GROMACS, RDKit) | [nemotron-science-agent](nemotron-science-agent/) |
 | RAPIDS Data Science Agent with Hermes | [rapids-data-science-agent](rapids-data-science-agent/) |
 | OpenShell + garak Agent Safety Lab | [openshell-garak-agent-safety-lab](openshell-garak-agent-safety-lab/) |
+| NemoClaw Private Agent on Local Nemotron | [nemoclaw-local-nemotron](nemoclaw-local-nemotron/) |
+| Nemotron Parse Document Agent | [nemotron-parse-document-agent](nemotron-parse-document-agent/) |
+| Nemotron Omni Browser Agent | [nemotron-omni-browser-agent](nemotron-omni-browser-agent/) |
