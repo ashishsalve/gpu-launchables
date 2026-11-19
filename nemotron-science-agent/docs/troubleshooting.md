@@ -2,6 +2,14 @@
 
 All commands run in a terminal on the instance.
 
+## The first image pull fails with "connection reset by peer"
+
+Start the services again; the pull resumes:
+
+```
+cd /home/ubuntu/workspace && sudo docker compose up -d
+```
+
 ## The chat page opens but no model is listed
 
 The model is still loading. First start downloads the weights (about 66 GB) and then loads them; the health check allows up to 45 minutes for this. Check progress:

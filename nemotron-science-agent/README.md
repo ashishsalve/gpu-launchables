@@ -2,6 +2,10 @@
 
 A local science agent on one GPU. [Hermes Agent](https://github.com/NousResearch/hermes-agent) drives [GROMACS](https://www.gromacs.org) molecular dynamics and [RDKit](https://github.com/rdkit/rdkit) cheminformatics through a fixed set of tools, using [NVIDIA Nemotron 3.5 Super VL](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4) served by [vLLM](https://github.com/vllm-project/vllm) on your instance. [Open WebUI](https://github.com/open-webui/open-webui) is the chat interface. Everything starts together with Docker Compose.
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3MJzeo3flqm6QKSzSPh2NZEdvYR)
+
+Launchable ID: env-3MJzeo3flqm6QKSzSPh2NZEdvYR
+
 1x RTX PRO 6000 96GB, >= 90 GB VRAM | 300 GiB disk | ~$4.80/hr (console 2026-11-15) | ~45 min to ready | Stop to pause, Delete when done
 
 Current versions: vllm/vllm-openai:v0.32.0, ghcr.io/open-webui/open-webui:v0.13.3, Hermes Agent v0.23.2, GROMACS 2026.4, RDKit 2026.9.2, model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4
