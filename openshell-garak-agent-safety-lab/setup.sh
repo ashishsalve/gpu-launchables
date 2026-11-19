@@ -187,8 +187,10 @@ services:
           python -m venv /venv/jbd
           /venv/jbd/bin/pip install --no-cache-dir --require-hashes -r /req/jbd.lock
         fi
-        /venv/jbd/bin/python -c "from huggingface_hub import hf_hub_download as d, snapshot_download as s; d('nvidia/NemoGuard-JailbreakDetect','snowflake.onnx',revision='$JBD_REV',local_dir='/models'); s('Snowflake/snowflake-arctic-embed-m-long',revision='$EMBED_REV')"
+        S=\$\$(/venv/jbd/bin/python -c "from huggingface_hub import hf_hub_download as d, snapshot_download as s; d('nvidia/NemoGuard-JailbreakDetect','snowflake.onnx',revision='$JBD_REV',local_dir='/models'); print(s('Snowflake/snowflake-arctic-embed-m-long',revision='$EMBED_REV'))")
         cd "\$\$(/venv/jbd/bin/python -c 'import nemoguardrails,os;print(os.path.dirname(nemoguardrails.__file__))')/library/jailbreak_detection"
+        mkdir -p Snowflake
+        ln -sfn "\$\$S" Snowflake/snowflake-arctic-embed-m-long
         exec /venv/jbd/bin/python server.py --port 1337
     ports: ["127.0.0.1:1337:1337"]
   guardrails:
