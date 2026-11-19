@@ -1,6 +1,6 @@
 # cuOpt Planning Agent on Nemotron
 
-Plan delivery routes and job schedules in plain English with NVIDIA cuOpt and a local NVIDIA Nemotron 3.5 Lightning model, served by vLLM, on one GPU. The planner gives the model a small set of solver tools, builds the cuOpt routing or scheduling request from the model's tool call, and shows the result on a map and a Gantt chart. The planner is configured to call the vLLM server on this instance; no hosted model API is configured.
+Plan delivery routes and job schedules in plain English with NVIDIA cuOpt and a local NVIDIA Nemotron 3.5 Lightning model, served by vLLM, on one GPU. The planner gives the model a small set of solver tools, builds the cuOpt routing or scheduling request from the model's tool call, and shows the routes and the job schedule as a table and a Gantt chart. The planner is configured to call the vLLM server on this instance; no hosted model API is configured.
 
 [![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3MJZSZtBvP7HOHkxRYmvvjUoeUQ)
 
