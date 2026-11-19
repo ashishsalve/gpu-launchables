@@ -12,8 +12,8 @@
 #                  a mode 600 file and never printed
 #
 # Everything lives under /home/ubuntu/workspace (survives Stop, removed by
-# Delete). code-server (13337, password login) and the Kernel Report (3000)
-# listen on all interfaces so Brev Secure Links can reach them; vLLM stays on
+# Delete). code-server (13337) and the Kernel Report (3000), both with a
+# generated password, listen on all interfaces so Brev Secure Links can reach them; vLLM stays on
 # localhost and the model proxy on the Docker bridge address only.
 set -euo pipefail
 
@@ -178,6 +178,53 @@ EOF
 chmod 600 "$CS_CONF"
 umask 022
 unset CS_PW
+# Kernel Report: read-only server for report-site behind HTTP Basic auth
+# (user report). Its password is generated here, kept on re-run, mode 600,
+# read from the file at startup and never printed or passed on a command line.
+RP_FILE="$HOME/.config/kernel-report/password"
+umask 077
+mkdir -p "$HOME/.config/kernel-report"
+if [ ! -s "$RP_FILE" ]; then
+  head -c 32 /dev/urandom | base64 | tr -dc A-Za-z0-9 | cut -c1-24 > "$RP_FILE"
+fi
+chmod 600 "$RP_FILE"
+umask 022
+cat > "$LAB/report-server.py" <<'PY'
+import base64, hmac, sys
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+root, pwfile = sys.argv[1], sys.argv[2]
+port = int(sys.argv[3]) if len(sys.argv) > 3 else 3000
+with open(pwfile) as f:
+    pw = f.read().strip()
+if not pw:
+    sys.exit("Kernel Report password file is empty")
+want = b"Basic " + base64.b64encode(b"report:" + pw.encode())
+del pw
+
+class Handler(SimpleHTTPRequestHandler):
+    def send_head(self):
+        got = self.headers.get("Authorization", "").encode("latin-1", "replace")
+        if not hmac.compare_digest(got, want):
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="Kernel Report"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
+        return super().send_head()
+
+    def list_directory(self, path):
+        self.send_error(404)
+        return None
+
+    def end_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        if self.path.split("?")[0].startswith("/files/"):
+            self.send_header("Content-Disposition", "attachment")
+        super().end_headers()
+
+ThreadingHTTPServer(("0.0.0.0", port), partial(Handler, directory=root)).serve_forever()
+PY
 cat > "$HOME/.local/share/code-server/User/settings.json" <<EOF
 {
   "terminal.integrated.profiles.linux": { "kernel-lab": { "path": "$LAB/host/attach.sh" } },
@@ -214,7 +261,7 @@ After=network-online.target
 [Service]
 User=$ME
 ExecStartPre=/usr/bin/python3 $LAB/host/generate.py $LAB/results $LAB/report-site
-ExecStart=/usr/bin/python3 -m http.server 3000 --bind 0.0.0.0 --directory $LAB/report-site
+ExecStart=/usr/bin/python3 -I $LAB/report-server.py $LAB/report-site $RP_FILE
 Restart=always
 
 [Install]
@@ -250,8 +297,12 @@ wait_coder() {
 }
 wait_coder http://localhost:8000/v1/models
 wait_coder "http://$BRIDGE_IP:$PROXY_PORT/v1/models"
+# The report login goes to curl on stdin (-K -), never on its command line.
+report_get() {
+  curl -fsS --max-time 5 -K - http://localhost:3000/ <<<"user = \"report:$(cat "$RP_FILE")\""
+}
 for _ in $(seq 1 30); do
-  if curl -fsS --max-time 5 http://localhost:3000/ | grep -q "Kernel Report" && \
+  if report_get | grep -q "Kernel Report" && \
      curl -fsS --max-time 5 -o /dev/null http://localhost:13337/healthz; then
     echo "CUDA kernel lab is ready: open the open-code-server link for the agent, the open-kernel-report link for the report."
     exit 0

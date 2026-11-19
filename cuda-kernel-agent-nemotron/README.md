@@ -15,6 +15,7 @@ Minimum GPU: one NVIDIA L40S 48GB. You can pick other compute at deploy time. vL
 - **open-code-server** link (the main button): a browser VS Code (code-server) whose default terminal opens inside the sandbox with the agent ready. code-server itself runs on the instance, not in the sandbox: its editor and any new terminal profile give full access to the instance (host files, Docker and sudo). It is protected by the Brev Secure Link login and a password generated at setup; do not share the link or the password.
   code-server asks for a password: in the Brev terminal run `grep ^password ~/.config/code-server/config.yaml`.
 - **open-kernel-report** link: the Kernel Report, a page listing each task run with baseline time, kernel time, measured speedup, test result, sanitizer result and Nsight Compute summary, with downloads.
+  The report asks for a login: user report; in the Brev terminal run `cat ~/.config/kernel-report/password`.
 - A sandbox with the CUDA toolkit (nvcc, compute-sanitizer), Nsight Compute, Nsight Systems, PyTorch, Triton, cuTile and CuPy, plus five pinned NVIDIA CUDA agent skills for cuTile and Triton kernel work.
 
 ## Try these three tasks
