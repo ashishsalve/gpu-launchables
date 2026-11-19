@@ -18,6 +18,18 @@ The model is still loading. First start downloads the weights (about 66 GB) and 
 cd /home/ubuntu/workspace && sudo docker compose logs --tail 50 vllm
 ```
 
+## A tool reports it is paused
+
+After a few failed tool calls, the agent pauses the science tools for about a minute, and the pause applies to every open chat. Wait about a minute and retry. Run one long task at a time.
+
+## Chat does not answer after Start
+
+After Start, the model takes about 15 minutes to load; the other services are back in about 2 minutes. The weights are not downloaded again. Check progress:
+
+```
+cd /home/ubuntu/workspace && sudo docker compose logs --tail 50 vllm
+```
+
 ## The agent does not answer
 
 ```
