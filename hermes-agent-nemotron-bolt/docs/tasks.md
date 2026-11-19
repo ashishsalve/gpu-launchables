@@ -16,7 +16,7 @@ Check the answer against the releases page: it should name three release tags, s
 Clone https://github.com/more-itertools/more-itertools at tag v11.2.1 into ~/work, install it with pip in a virtual environment, run its test suite and tell me how many tests passed and which failed.
 ```
 
-The commands run inside the hermes container. more-itertools is a small pure-Python library under the MIT License.
+The commands run inside the hermes container. There `~/work` is `/opt/data/home/work`; on the instance it is `/home/ubuntu/workspace/hermes-bolt/hermes/home/work`. more-itertools is a small pure-Python library under the MIT License.
 
 ## Check that the model is local
 
