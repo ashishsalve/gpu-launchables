@@ -26,3 +26,4 @@ These environments are for developers, researchers and teams who want a working 
 | RAPIDS Data Science with cuDF and cuML | [rapids-datascience](rapids-datascience/) |
 | RAGFlow RAG with NVIDIA Nemotron | [ragflow-nemotron](ragflow-nemotron/) |
 | NeMo Voice Agent on Nemotron | [nemo-voice-agent-nemotron](nemo-voice-agent-nemotron/) |
+| cuOpt Planning Agent on Nemotron | [cuopt-planning-agent](cuopt-planning-agent/) |

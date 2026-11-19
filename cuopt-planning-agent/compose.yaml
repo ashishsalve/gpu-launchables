@@ -1,0 +1,980 @@
+# cuOpt Planning Agent on Nemotron
+# Plan delivery routes and job schedules in plain English. A local NVIDIA
+# Nemotron 3.5 Lightning model (served by vLLM) turns your request into solver
+# parameters, NVIDIA cuOpt solves the routing or scheduling problem on the same
+# GPU, and the planner web app on port 3000 shows the result.
+# Inspired by NVIDIA's cuOpt agent example (NVIDIA/cuopt-examples).
+#
+# Docker Compose mode, three services:
+#   vllm     - Nemotron 3.5 Lightning on localhost:8000 (OpenAI-compatible API,
+#              served as "nemotron-planner"); reach it with `brev port-forward`.
+#   cuopt    - NVIDIA cuOpt server (HTTP on port 5000 inside the compose
+#              network). It is attached only to the "solver" network, which
+#              compose declares internal. It starts after vLLM reports healthy.
+#   planner  - planner web app on port 3000 (Brev Secure Link "open-planner").
+#              Python standard library only; no packages are installed.
+#
+# Launch parameters (Compose interpolation, read by the first `docker compose
+# up`):
+#   MODEL     Model vLLM serves. One choice:
+#             nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+#   HF_TOKEN  Optional Hugging Face read token. The model is public; a token
+#             only lifts anonymous download limits. It reaches the vllm
+#             service environment only and is never printed.
+#
+# Pins:
+#   vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967
+#     The vLLM release named by the Nemotron 3.5 Lightning model card.
+#   nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 @ bee7596271d1495f6992ae224aefde4410e816b8
+#     Model revision on Hugging Face (OpenMDW-1.1).
+#   nvidia/cuopt:26.10.1-cuda12.9-py3.14@sha256:89dcda2f30bc5b1cb0f0db6da342c6e966a8e6ac46b8ab8ed0b98c922aa2f32a
+#     cuOpt 26.10.1 server image (Apache-2.0), run with its own entrypoint
+#     and command.
+#   python:3.12.16-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
+#     Small base for the planner app.
+#   maplibre-gl 6.19.0 from registry.npmjs.org, checked against its published
+#     sha512 integrity before use (BSD-3-Clause). The map has no basemap tiles.
+#   NVIDIA/skills @ e8f43c17b6ed0e8888ad21a447f63b0617849f71, source tarball
+#     checked against sha256
+#     2ea0fff7f84973fc0c5831942b1ba76e5402042d786695b37162183ddd932a2e before
+#     use; five cuopt-* SKILL.md files the agent can read.
+#
+# Persistence: the Hugging Face cache, samples, saved plans and vendored files
+# live under /home/ubuntu/workspace/cuopt-planner on the instance disk, which
+# is kept when the instance is stopped and removed when it is deleted.
+
+name: cuopt-planning-agent
+
+networks:
+  default: {}
+  solver:
+    # Internal network: cuOpt and the planner only.
+    internal: true
+
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967
+    restart: unless-stopped
+    ipc: host
+    networks: [default]
+    environment:
+      MODEL: "${MODEL:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      VLLM_USE_DEEP_GEMM: "0"
+      VLLM_HUMMING_MOE_GEMM_TYPE: "indexed"
+    volumes:
+      - /home/ubuntu/workspace/cuopt-planner/huggingface:/root/.cache/huggingface
+    entrypoint:
+      - /bin/bash
+      - -c
+      # GPU memory is shared with cuOpt, so vLLM takes 55 percent and serves at
+      # most 8 sequences with a 32768-token context.
+      - 'set -euo pipefail; exec vllm serve "$$MODEL" --revision bee7596271d1495f6992ae224aefde4410e816b8 --served-model-name nemotron-planner --host 0.0.0.0 --port 8000 --quantization modelopt_fp4 --moe-backend humming --linear-backend humming --mamba-backend flashinfer --mamba-cache-mode align --mamba-ssu-algorithm simple --reasoning-parser nemotron_v3 --max-model-len 32768 --gpu-memory-utilization 0.55 --max-num-seqs 8 --enable-prefix-caching --enable-auto-tool-choice --tool-call-parser qwen3_coder'
+    ports:
+      # Instance loopback only: reach the API with `brev port-forward`.
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1800s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  cuopt:
+    image: nvidia/cuopt:26.10.1-cuda12.9-py3.14@sha256:89dcda2f30bc5b1cb0f0db6da342c6e966a8e6ac46b8ab8ed0b98c922aa2f32a
+    restart: unless-stopped
+    networks: [solver]
+    depends_on:
+      vllm:
+        # vLLM sizes its share of GPU memory from what is free when it loads,
+        # so cuOpt is created only after vLLM reports healthy.
+        condition: service_healthy
+    # The image's own entrypoint and command are used; nothing is overridden.
+    # The planner reaches cuOpt at http://cuopt:5000 (CUOPT_URL).
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/cuopt/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 600s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  planner:
+    image: python:3.12.16-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
+    restart: unless-stopped
+    networks: [default, solver]
+    depends_on:
+      vllm:
+        # Start the page at once; it shows model and solver status until both
+        # are ready. It does not wait for cuopt, which waits for vLLM.
+        condition: service_started
+    volumes:
+      - /home/ubuntu/workspace/cuopt-planner:/data
+    ports:
+      # Served to deployers through the Brev Secure Link "open-planner".
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3000/api/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 120s
+    entrypoint: ["python3", "-u", "-c", "import os; exec(os.environ['PLANNER_APP'])"]
+    environment:
+      LLM_BASE_URL: "http://vllm:8000/v1"
+      LLM_MODEL: "nemotron-planner"
+      LLM_API_KEY: "none"
+      LLM_MAX_TOKENS: "4096"
+      CUOPT_URL: "http://cuopt:5000"
+      DATA_DIR: "/data"
+      AVG_SPEED_KMH: "30"
+      MAPLIBRE_VERSION: "6.19.0"
+      MAPLIBRE_INTEGRITY: "sha512-3bOrnfddggUYudLGJFsYFvqulUyvSxy4iQzd/uURI7ZhgYEZifdSrECujRSghaCpc+v/ZsFI0Y6ZsGSilEtE+w=="
+      SKILLS_REF: "e8f43c17b6ed0e8888ad21a447f63b0617849f71"
+      SKILLS_SHA256: "2ea0fff7f84973fc0c5831942b1ba76e5402042d786695b37162183ddd932a2e"
+      PYTHONDONTWRITEBYTECODE: "1"
+      SAMPLE_STOPS: |
+        stop,name,lat,lon,demand,earliest,latest,service_min
+        1,Bakery Nord,52.5412,13.3801,4,07:00,19:00,10
+        2,Cafe Linde,52.5355,13.4212,3,07:00,19:00,10
+        3,Market Hall,52.5298,13.4511,5,07:00,19:00,10
+        4,Kiosk Ost,52.5221,13.4702,2,07:00,19:00,10
+        5,Hotel Spree,52.5133,13.4609,6,07:00,19:00,10
+        6,Corner Shop,52.5052,13.4380,4,07:00,19:00,10
+        7,School Canteen,52.4981,13.4155,3,07:00,19:00,10
+        8,Deli Sud,52.4902,13.3933,5,07:00,19:00,10
+        9,Pharmacy West,52.5003,13.3651,4,07:00,19:00,10
+        10,Book Store,52.5108,13.3502,2,07:00,19:00,10
+        11,Office Park,52.5207,13.3420,6,07:00,19:00,10
+        12,Clinic Mitte,52.5266,13.3605,5,07:00,19:00,10
+        13,Flower Shop,52.5330,13.3911,3,07:00,19:00,10
+        14,Gym Hall,52.5467,13.4105,4,07:00,19:00,10
+        15,Restaurant Park,52.5523,13.4400,5,07:00,19:00,10
+        16,Library,52.5401,13.4655,2,07:00,19:00,10
+        17,Hostel East,52.5179,13.4851,4,07:00,19:00,10
+        18,Supermarket,52.4950,13.4520,6,07:00,19:00,10
+        19,Bike Repair,52.4855,13.4251,3,07:00,19:00,10
+        20,Garden Cafe,52.4801,13.3850,5,07:00,19:00,10
+        21,Studio Loft,52.4920,13.3505,4,07:00,19:00,10
+        22,Museum Shop,52.5150,13.3755,3,07:00,19:00,10
+        23,Tea House,52.5250,13.4300,4,07:00,19:00,10
+        24,Workshop,52.5080,13.4050,4,07:00,19:00,10
+        25,Ice Cream Bar,52.5320,13.4060,4,07:00,19:00,10
+      SAMPLE_DEPOT: |
+        name,lat,lon,open,close
+        Depot D,52.5200,13.4050,07:00,19:00
+      SAMPLE_VEHICLES: |
+        van,capacity
+        1,40
+        2,40
+        3,40
+      SAMPLE_JOBS: |
+        job,duration_min
+        1,30
+        2,45
+        3,20
+        4,60
+        5,35
+        6,50
+        7,25
+        8,40
+        9,55
+        10,15
+        11,45
+        12,30
+      PLANNER_APP: |
+        import base64, csv, hashlib, io, json, math, os, sys, tarfile, threading, time
+        import urllib.error, urllib.request
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        E = os.environ
+        DATA = E.get("DATA_DIR", "/data")
+        LLM = E.get("LLM_BASE_URL", "http://vllm:8000/v1")
+        LLM_MODEL = E.get("LLM_MODEL", "nemotron-planner")
+        LLM_KEY = E.get("LLM_API_KEY", "none")
+        MAX_TOKENS = int(E.get("LLM_MAX_TOKENS", "4096"))
+        CUOPT = E.get("CUOPT_URL", "http://cuopt:5000")
+        SPEED = float(E.get("AVG_SPEED_KMH", "30"))
+        SKILLS = ["cuopt-routing-api-python", "cuopt-server-api-python",
+                  "cuopt-numerical-optimization-formulation", "cuopt-numerical-optimization-api",
+                  "cuopt-multi-objective-exploration"]
+        MILP_TIME_LIMIT = 20
+        # Download cap for the pinned NVIDIA/skills source tarball, with margin
+        # over its size; the sha256 check still decides whether it is used.
+        SKILLS_MAX_BYTES = 64 * 1024 * 1024
+        STATE = {"map": "loading", "skills": 0, "last": None, "llm_requests": 0}
+        LOCK = threading.Lock()
+
+
+        def log(*a):
+            print("planner:", *a, flush=True)
+
+
+        def hm(s):
+            h, m = str(s).strip().split(":")
+            return int(h) * 60 + int(m)
+
+
+        def clock(m):
+            m = int(round(m))
+            return "%02d:%02d" % (m // 60, m % 60)
+
+
+        def rows(name):
+            path = os.path.join(DATA, "samples", name + ".csv")
+            with open(path, newline="") as f:
+                return list(csv.DictReader(f))
+
+
+        def write_samples():
+            os.makedirs(os.path.join(DATA, "samples"), exist_ok=True)
+            for key, name in (("SAMPLE_STOPS", "stops"), ("SAMPLE_DEPOT", "depot"),
+                              ("SAMPLE_VEHICLES", "vehicles"), ("SAMPLE_JOBS", "jobs")):
+                path = os.path.join(DATA, "samples", name + ".csv")
+                if not os.path.exists(path):
+                    with open(path, "w") as f:
+                        f.write(E[key])
+
+
+        def http_json(url, body=None, headers=None, timeout=30, method=None):
+            data = None if body is None else json.dumps(body).encode()
+            req = urllib.request.Request(url, data=data, method=method or ("POST" if data else "GET"))
+            req.add_header("Content-Type", "application/json")
+            for k, v in (headers or {}).items():
+                req.add_header(k, v)
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode() or "null")
+
+
+        def vendor_maplibre():
+            ver, want = E["MAPLIBRE_VERSION"], E["MAPLIBRE_INTEGRITY"]
+            out = os.path.join(DATA, "vendor", "maplibre-" + ver)
+            if os.path.exists(os.path.join(out, ".verified")):
+                STATE["map"] = "ok"
+                return
+            os.makedirs(out, exist_ok=True)
+            url = "https://registry.npmjs.org/maplibre-gl/-/maplibre-gl-" + ver + ".tgz"
+            for attempt in range(5):
+                try:
+                    blob = urllib.request.urlopen(url, timeout=120).read()
+                    got = "sha512-" + base64.b64encode(hashlib.sha512(blob).digest()).decode()
+                    if got != want:
+                        STATE["map"] = "integrity check failed"
+                        log("maplibre integrity mismatch; the map stays off")
+                        return
+                    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as t:
+                        for m in t.getmembers():
+                            base = m.name.rsplit("/", 1)[-1]
+                            if m.isfile() and m.name.startswith("package/dist/") and base in (
+                                    "maplibre-gl.js", "maplibre-gl.mjs", "maplibre-gl.css"):
+                                with open(os.path.join(out, base), "wb") as f:
+                                    f.write(t.extractfile(m).read())
+                    open(os.path.join(out, ".verified"), "w").close()
+                    STATE["map"] = "ok"
+                    log("maplibre", ver, "verified")
+                    return
+                except Exception as e:
+                    log("maplibre download attempt", attempt + 1, "failed:", type(e).__name__)
+                    time.sleep(10)
+            STATE["map"] = "download failed"
+
+
+        def read_capped(stream, cap=SKILLS_MAX_BYTES):
+            # Reads at most cap + 1 bytes, so an oversized download fails closed
+            # before it is held in memory or hashed.
+            parts, n = [], 0
+            while n <= cap:
+                b = stream.read(min(1 << 20, cap + 1 - n))
+                if not b:
+                    break
+                parts.append(b)
+                n += len(b)
+            blob = b"".join(parts)
+            if len(blob) > cap:
+                raise ValueError("skills tarball exceeds " + str(cap // (1024 * 1024)) + " MiB")
+            return blob
+
+
+        def extract_skills(blob, want, d):
+            # Only the pinned list of SKILL.md files is written, and only when the
+            # tarball is within the size cap and matches the pinned sha256.
+            if len(blob) > SKILLS_MAX_BYTES:
+                raise ValueError("skills tarball exceeds " + str(SKILLS_MAX_BYTES // (1024 * 1024)) + " MiB")
+            got = hashlib.sha256(blob).hexdigest()
+            if got != want:
+                raise ValueError("skills tarball sha256 mismatch")
+            n = 0
+            with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as t:
+                for m in t.getmembers():
+                    parts = m.name.split("/")
+                    if (m.isfile() and len(parts) == 4 and parts[1] == "skills"
+                            and parts[2] in SKILLS and parts[3] == "SKILL.md"):
+                        with open(os.path.join(d, parts[2] + ".md"), "wb") as f:
+                            f.write(t.extractfile(m).read())
+                        n += 1
+            return n
+
+
+        def fetch_skills():
+            ref, want = E["SKILLS_REF"], E["SKILLS_SHA256"]
+            d = os.path.join(DATA, "skills", ref)
+            os.makedirs(d, exist_ok=True)
+            if os.path.exists(os.path.join(d, ".verified")):
+                STATE["skills"] = sum(os.path.exists(os.path.join(d, s + ".md")) for s in SKILLS)
+                return
+            url = "https://codeload.github.com/NVIDIA/skills/tar.gz/" + ref
+            for attempt in range(5):
+                try:
+                    with urllib.request.urlopen(url, timeout=120) as r:
+                        blob = read_capped(r)
+                    STATE["skills"] = extract_skills(blob, want, d)
+                    open(os.path.join(d, ".verified"), "w").close()
+                    log("skills", ref[:12], "verified,", STATE["skills"], "files")
+                    return
+                except ValueError as e:
+                    log(str(e) + "; read_skill stays off")
+                    return
+                except Exception as e:
+                    log("skills download attempt", attempt + 1, "failed:", type(e).__name__)
+                    time.sleep(10)
+
+
+        def km(a, b):
+            la1, lo1, la2, lo2 = map(math.radians, (a[0], a[1], b[0], b[1]))
+            h = math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2
+            return 12742.0 * math.asin(math.sqrt(h))
+
+
+        # ---- deterministic builders: validated parameters in, cuOpt JSON out ----
+
+        def check_int(v, name, lo, hi):
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or int(v) != v or not lo <= v <= hi:
+                raise ValueError(name + " must be a whole number from " + str(lo) + " to " + str(hi))
+            return int(v)
+
+
+        def check_time(v, name):
+            try:
+                m = hm(v)
+            except Exception:
+                raise ValueError(name + " must be a time like 07:00")
+            if not 0 <= m <= 1440:
+                raise ValueError(name + " must be between 00:00 and 24:00")
+            return m
+
+
+        def routing_params(a):
+            veh = rows("vehicles")
+            stops = rows("stops")
+            dep = rows("depot")[0]
+            p = {"notes": []}
+            fleet = len(veh)
+            p["vehicles"] = check_int(a.get("vehicles", fleet), "vehicles", 1, 20)
+            p["capacity"] = check_int(a.get("capacity", int(veh[0]["capacity"])), "capacity", 1, 10000)
+            p["depot_open"] = check_time(a.get("depot_open", dep["open"]), "depot_open")
+            p["depot_close"] = check_time(a.get("depot_close", dep["close"]), "depot_close")
+            if p["depot_close"] <= p["depot_open"]:
+                raise ValueError("depot_close must be after depot_open")
+            ex = a.get("exclude_vehicles", []) or []
+            if not isinstance(ex, list):
+                raise ValueError("exclude_vehicles must be a list of van numbers")
+            if ex and p["vehicles"] < fleet:
+                # vehicles is the whole fleet; broken vans are removed only through
+                # exclude_vehicles, so a reduced count would drop working vans too.
+                p["notes"].append("vehicles reset from " + str(p["vehicles"]) + " to the fleet size " + str(fleet) +
+                                  " because exclude_vehicles already removes the unavailable vans")
+                log(p["notes"][-1])
+                p["vehicles"] = fleet
+            p["exclude_vehicles"] = sorted({check_int(v, "exclude_vehicles item", 1, p["vehicles"]) for v in ex})
+            if len(p["exclude_vehicles"]) >= p["vehicles"]:
+                raise ValueError("at least one van must remain")
+            scale = a.get("demand_scale", 1.0)
+            if isinstance(scale, bool) or not isinstance(scale, (int, float)) or not 0.1 <= scale <= 5:
+                raise ValueError("demand_scale must be a number from 0.1 to 5")
+            p["demand_scale"] = float(scale)
+            tw = {}
+            for w in a.get("time_windows", []) or []:
+                if not isinstance(w, dict):
+                    raise ValueError("time_windows items need stop, earliest and latest")
+                s = check_int(w.get("stop"), "time_windows stop", 1, len(stops))
+                e0 = check_time(w.get("earliest", "00:00"), "earliest")
+                l0 = check_time(w.get("latest", "24:00"), "latest")
+                tw[s] = (e0, l0)
+            p["time_windows"] = tw
+            return p
+
+
+        def routing_payload(p):
+            stops = rows("stops")
+            dep = rows("depot")[0]
+            pts = [(float(dep["lat"]), float(dep["lon"]))] + [(float(s["lat"]), float(s["lon"])) for s in stops]
+            mat = [[round(km(a, b) / SPEED * 60.0, 2) for b in pts] for a in pts]
+            vans = [v for v in range(1, p["vehicles"] + 1) if v not in p["exclude_vehicles"]]
+            demand = [max(1, int(math.ceil(int(s["demand"]) * p["demand_scale"]))) for s in stops]
+            windows = []
+            for i, s in enumerate(stops, 1):
+                e0, l0 = p["time_windows"].get(i, (hm(s["earliest"]), hm(s["latest"])))
+                windows.append([max(e0, p["depot_open"]), min(l0, p["depot_close"])])
+            task = {
+                "task_locations": list(range(1, len(pts))),
+                "demand": [demand],
+                "task_time_windows": windows,
+                "service_times": [int(s["service_min"]) for s in stops],
+            }
+            if sum(demand) > p["capacity"] * len(vans):
+                # Not every stop fits: let the solver leave the smallest value undelivered.
+                task["prizes"] = [float(d) * 100.0 for d in demand]
+            body = {
+                "cost_matrix_data": {"data": {"0": mat}},
+                "travel_time_matrix_data": {"data": {"0": mat}},
+                "fleet_data": {
+                    "vehicle_locations": [[0, 0] for _ in vans],
+                    "capacities": [[p["capacity"] for _ in vans]],
+                    "vehicle_time_windows": [[p["depot_open"], p["depot_close"]] for _ in vans],
+                },
+                "task_data": task,
+                "solver_config": {"time_limit": 5},
+            }
+            return body, {"vans": vans, "points": pts, "demand": demand, "windows": windows, "stops": stops, "mat": mat}
+
+
+        def jobs_payload(a):
+            jobs = rows("jobs")
+            n = len(jobs)
+            m = check_int(a.get("machines", 3), "machines", 1, 8)
+            prec = []
+            for pr in a.get("precedences", []) or []:
+                if not isinstance(pr, list) or len(pr) != 2:
+                    raise ValueError("precedences items are [before_job, after_job]")
+                prec.append((check_int(pr[0], "job", 1, n) - 1, check_int(pr[1], "job", 1, n) - 1))
+            dur = [float(j["duration_min"]) for j in jobs]
+            H = sum(dur)
+            names, lo, hi, types = [], [], [], []
+
+            def var(nm, l, h, t):
+                names.append(nm); lo.append(l); hi.append(h); types.append(t)
+                return len(names) - 1
+
+            x = [[var("x_%d_%d" % (j + 1, k + 1), 0, 1, "I") for k in range(m)] for j in range(n)]
+            s = [var("s_%d" % (j + 1), 0, H, "C") for j in range(n)]
+            C = var("makespan", 0, H, "C")
+            pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
+            y = {pq: var("y_%d_%d" % (pq[0] + 1, pq[1] + 1), 0, 1, "I") for pq in pairs}
+            R = []  # rows: (dict coeffs, lower, upper)
+            NEG = -1.0e7
+            for j in range(n):
+                R.append(({x[j][k]: 1.0 for k in range(m)}, 1.0, 1.0))
+                R.append(({s[j]: 1.0, C: -1.0}, NEG, -dur[j]))
+            for (i, j) in pairs:
+                for k in range(m):
+                    # i before j when y=1 and both on machine k
+                    R.append(({s[i]: 1.0, s[j]: -1.0, x[i][k]: H, x[j][k]: H, y[(i, j)]: H}, NEG, 3 * H - dur[i]))
+                    # j before i when y=0 and both on machine k
+                    R.append(({s[j]: 1.0, s[i]: -1.0, x[i][k]: H, x[j][k]: H, y[(i, j)]: -H}, NEG, 2 * H - dur[j]))
+            for (b, c) in prec:
+                R.append(({s[b]: 1.0, s[c]: -1.0}, NEG, -dur[b]))
+            offs, idx, val = [0], [], []
+            for coeffs, _, _ in R:
+                for k2 in sorted(coeffs):
+                    idx.append(k2); val.append(coeffs[k2])
+                offs.append(len(idx))
+            obj = [0.0] * len(names)
+            obj[C] = 1.0
+            body = {
+                "csr_constraint_matrix": {"offsets": offs, "indices": idx, "values": val},
+                "constraint_bounds": {"lower_bounds": [r[1] for r in R], "upper_bounds": [r[2] for r in R]},
+                "objective_data": {"coefficients": obj, "scalability_factor": 1.0, "offset": 0.0},
+                "variable_bounds": {"lower_bounds": lo, "upper_bounds": hi},
+                "maximize": False,
+                "variable_names": names,
+                "variable_types": types,
+                "solver_config": {"time_limit": MILP_TIME_LIMIT},
+            }
+            return body, {"n": n, "m": m, "x": x, "s": s, "C": C, "dur": dur, "prec": prec}
+
+
+        def cuopt_solve(body, timeout=120):
+            hdr = {"CLIENT-VERSION": "custom"}
+            r = http_json(CUOPT + "/cuopt/request", body, hdr, timeout=60)
+            t0 = time.time()
+            while isinstance(r, dict) and "response" not in r and r.get("reqId"):
+                if time.time() - t0 > timeout:
+                    raise RuntimeError("cuOpt did not answer within " + str(timeout) + " s")
+                time.sleep(0.5)
+                try:
+                    r = http_json(CUOPT + "/cuopt/solution/" + r["reqId"], None, hdr, timeout=30)
+                except urllib.error.HTTPError as e:
+                    if e.code != 404:
+                        raise
+            if not isinstance(r, dict) or "response" not in r:
+                raise RuntimeError("unexpected cuOpt reply")
+            return r["response"]
+
+
+        def solve_routing(a):
+            p = routing_params(a)
+            body, ctx = routing_payload(p)
+            t0 = time.time()
+            resp = cuopt_solve(body)
+            took = round(time.time() - t0, 2)
+            out = routing_result(p, ctx, resp.get("solver_response", resp), took)
+            remember(out)
+            return out
+
+
+        def routing_result(p, ctx, sr, took):
+            # The solver's own cost includes prizes for dropped stops (it can go
+            # negative), so the plan reports driving minutes summed over the legs.
+            routes, served, travel = [], set(), 0.0
+            for vk, vd in sorted((sr.get("vehicle_data") or {}).items(), key=lambda kv: int(kv[0])):
+                van = ctx["vans"][int(vk)]
+                legs = []
+                for loc, at in zip(vd.get("route", []), vd.get("arrival_stamp", [])):
+                    loc = int(loc)
+                    lat, lon = ctx["points"][loc]
+                    name = "Depot D" if loc == 0 else ctx["stops"][loc - 1]["name"]
+                    legs.append({"stop": loc, "name": name, "lat": lat, "lon": lon, "eta": clock(at)})
+                    if loc:
+                        served.add(loc)
+                stops_seq = [int(l) for l in vd.get("route", [])]
+                travel += sum(ctx["mat"][x][y] for x, y in zip(stops_seq, stops_seq[1:]))
+                load = sum(ctx["demand"][s - 1] for s in {l["stop"] for l in legs if l["stop"]})
+                routes.append({"van": van, "load": load, "legs": legs})
+            status = sr.get("status")
+            space = p["capacity"] * len(ctx["vans"])
+            if sum(ctx["demand"]) > space:
+                why = "capacity: total demand " + str(sum(ctx["demand"])) + " crates exceeds " + str(space) + " crates of van space"
+            else:
+                why = "not routed by the solver (status " + str(status) + "); check the time windows"
+            unserved = [{"stop": i, "name": ctx["stops"][i - 1]["name"], "demand": ctx["demand"][i - 1], "reason": why}
+                        for i in range(1, len(ctx["points"])) if i not in served]
+            out = {"kind": "routing", "status": "success" if status == 0 else "solver status " + str(status),
+                   "solve_seconds": took, "params": dict({k: v for k, v in p.items() if k != "notes"}, time_windows={str(k): [clock(v[0]), clock(v[1])] for k, v in p["time_windows"].items()}),
+                   "routes": routes, "unserved": unserved, "travel_min": round(travel, 1), "notes": list(p["notes"]),
+                   "depot": {"lat": ctx["points"][0][0], "lon": ctx["points"][0][1]},
+                   "stops": [{"stop": i, "name": s["name"], "lat": float(s["lat"]), "lon": float(s["lon"])} for i, s in enumerate(ctx["stops"], 1)]}
+            return out
+
+
+        def solve_milp(a):
+            body, ctx = jobs_payload(a)
+            t0 = time.time()
+            resp = cuopt_solve(body)
+            took = round(time.time() - t0, 2)
+            sol = (resp.get("solver_response") or {}).get("solution") or {}
+            status = (resp.get("solver_response") or {}).get("status")
+            v = sol.get("primal_solution") or []
+            bars = []
+            if v:
+                for j in range(ctx["n"]):
+                    mach = max(range(ctx["m"]), key=lambda k: v[ctx["x"][j][k]]) + 1
+                    st = v[ctx["s"][j]]
+                    bars.append({"job": j + 1, "machine": mach, "start": round(st, 1), "end": round(st + ctx["dur"][j], 1)})
+            out = {"kind": "schedule", "status": str(status), "solve_seconds": took,
+                   "makespan_min": round(v[ctx["C"]], 1) if v else None, "machines": ctx["m"],
+                   "precedences": [[b + 1, c + 1] for b, c in ctx["prec"]], "bars": bars}
+            out.update(schedule_note(status, bool(v)))
+            remember(out)
+            return out
+
+
+        def schedule_note(status, has_primal=False):
+            # The solve stops at MILP_TIME_LIMIT seconds; a feasible but unproven
+            # plan is reported as the best found within that limit, and a solve
+            # without a feasible plan says so.
+            s = str(status).lower()
+            if s == "optimal":
+                return {"status_note": "optimal"}
+            if s == "feasiblefound" or has_primal:
+                return {"status_note": "best found within " + str(MILP_TIME_LIMIT) + " s (not proven optimal)"}
+            return {"status_note": "no feasible schedule found within " + str(MILP_TIME_LIMIT) + " s"}
+
+
+        def remember(out):
+            with LOCK:
+                STATE["last"] = out
+            d = os.path.join(DATA, "plans")
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, time.strftime("%Y%m%d-%H%M%S-") + out["kind"] + ".json"), "w") as f:
+                json.dump(out, f, indent=1)
+
+
+        def get_sample_data(a):
+            name = a.get("name")
+            if name not in ("stops", "vehicles", "jobs", "depot"):
+                raise ValueError("name must be stops, vehicles, jobs or depot")
+            with open(os.path.join(DATA, "samples", name + ".csv")) as f:
+                return {"name": name, "csv": f.read()}
+
+
+        def read_skill(a):
+            name = a.get("name")
+            if name not in SKILLS:
+                raise ValueError("name must be one of " + ", ".join(SKILLS))
+            p = os.path.join(DATA, "skills", E["SKILLS_REF"], name + ".md")
+            if not os.path.exists(p):
+                return {"name": name, "error": "skill file not available on this instance"}
+            with open(p) as f:
+                return {"name": name, "text": f.read()[:6000]}
+
+
+        TOOLS = {"solve_routing": solve_routing, "solve_milp": solve_milp,
+                 "get_sample_data": get_sample_data, "read_skill": read_skill}
+        TIME = {"type": "string", "description": "24-hour time HH:MM"}
+        TOOL_SPECS = [
+            {"type": "function", "function": {"name": "solve_routing",
+             "description": "Plan delivery routes for the sample stops with NVIDIA cuOpt (capacitated vehicle routing with time windows). The depot is location 0; stops are numbered 1-25.",
+             "parameters": {"type": "object", "properties": {
+                 "vehicles": {"type": "integer", "description": "total fleet size including unavailable vans; do not reduce it for a breakdown (vans are numbered 1..vehicles)"},
+                 "capacity": {"type": "integer", "description": "crates per van"},
+                 "depot_open": TIME, "depot_close": TIME,
+                 "exclude_vehicles": {"type": "array", "items": {"type": "integer"}, "description": "van numbers that are unavailable"},
+                 "time_windows": {"type": "array", "items": {"type": "object", "properties": {
+                     "stop": {"type": "integer"}, "earliest": TIME, "latest": TIME}, "required": ["stop"]}},
+                 "demand_scale": {"type": "number", "description": "multiply every stop's demand, 1.15 means 15 percent more"}}}}},
+            {"type": "function", "function": {"name": "solve_milp",
+             "description": "Schedule the sample jobs on identical machines with NVIDIA cuOpt (mixed-integer program) to minimize makespan.",
+             "parameters": {"type": "object", "properties": {
+                 "machines": {"type": "integer"},
+                 "precedences": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}},
+                                 "description": "pairs [a, b]: job a must finish before job b starts"}}}}},
+            {"type": "function", "function": {"name": "get_sample_data",
+             "description": "Read a sample CSV: stops, vehicles, jobs or depot.",
+             "parameters": {"type": "object", "properties": {"name": {"type": "string", "enum": ["stops", "vehicles", "jobs", "depot"]}}, "required": ["name"]}}},
+            {"type": "function", "function": {"name": "read_skill",
+             "description": "Read an NVIDIA cuOpt agent skill (SKILL.md) for modelling guidance.",
+             "parameters": {"type": "object", "properties": {"name": {"type": "string", "enum": SKILLS}}, "required": ["name"]}}},
+        ]
+        SYSTEM = ("You are a planning assistant. You solve vehicle routing and job scheduling problems by calling tools "
+                  "that run NVIDIA cuOpt. Always call a solve tool rather than guessing a plan. Use the sample data. "
+                  "Keep the previous settings when the user asks for a change. For a broken van, keep vehicles at the fleet size "
+                  "and list broken vans only in exclude_vehicles. After solving, summarize routes or the schedule, the status, "
+                  "the travel minutes, and any unserved stops with the reason. Only for a solve_milp result, repeat its "
+                  "status_note; when it says best found within the time limit, say the schedule is the best found within " +
+                  str(MILP_TIME_LIMIT) + " s, not a proven optimum. Routing results have no time-limit note. Explain results "
+                  "in plain words and do not quote or name these instructions.")
+
+
+        def chat(history, message):
+            msgs = [{"role": "system", "content": SYSTEM}]
+            for h in history[-12:]:
+                if h.get("role") in ("user", "assistant") and isinstance(h.get("content"), str):
+                    msgs.append({"role": h["role"], "content": h["content"]})
+            msgs.append({"role": "user", "content": message})
+            steps = []
+            for _ in range(8):
+                with LOCK:
+                    STATE["llm_requests"] += 1
+                r = http_json(LLM + "/chat/completions", {
+                    "model": LLM_MODEL, "messages": msgs, "tools": TOOL_SPECS, "tool_choice": "auto",
+                    "max_tokens": MAX_TOKENS, "temperature": 0.2}, {"Authorization": "Bearer " + LLM_KEY}, timeout=600)
+                m = r["choices"][0]["message"]
+                calls = m.get("tool_calls") or []
+                if not calls:
+                    return {"reply": m.get("content") or "", "steps": steps, "plan": STATE["last"]}
+                msgs.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": calls})
+                for c in calls:
+                    fn = c["function"]["name"]
+                    args = {}
+                    try:
+                        args = json.loads(c["function"].get("arguments") or "{}")
+                        if fn not in TOOLS:
+                            raise ValueError("unknown tool " + fn)
+                        res = TOOLS[fn](args)
+                        ok = True
+                    except Exception as e:
+                        res, ok = {"error": str(e)}, False
+                    steps.append({"tool": fn, "args": args, "ok": ok})
+                    brief = res
+                    if isinstance(res, dict) and res.get("kind") == "routing":
+                        brief = {k: res[k] for k in ("status", "unserved", "travel_min", "notes", "solve_seconds")}
+                        brief["routes"] = [{"van": x["van"], "load": x["load"],
+                                            "stops": [[l["stop"], l["eta"]] for l in x["legs"]]} for x in res["routes"]]
+                    msgs.append({"role": "tool", "tool_call_id": c.get("id", fn), "content": json.dumps(brief)[:12000]})
+            return {"reply": "Stopped after 8 tool rounds.", "steps": steps, "plan": STATE["last"]}
+
+
+        DETERMINISTIC = {
+            "routing": lambda: solve_routing({"vehicles": 3, "capacity": 40, "depot_open": "07:00", "depot_close": "19:00",
+                                              "time_windows": [{"stop": 12, "earliest": "14:00", "latest": "19:00"}]}),
+            "breakdown": lambda: solve_routing({"vehicles": 3, "capacity": 40, "depot_open": "07:00", "depot_close": "19:00",
+                                                "exclude_vehicles": [2],
+                                                "time_windows": [{"stop": 12, "earliest": "14:00", "latest": "19:00"}]}),
+            "schedule": lambda: solve_milp({"machines": 3, "precedences": [[4, 7]]}),
+        }
+
+
+        def health():
+            h = {"planner": "ok", "map": STATE["map"], "skills": STATE["skills"], "llm_requests": STATE["llm_requests"]}
+            try:
+                ids = [m["id"] for m in http_json(LLM + "/models", None, {"Authorization": "Bearer " + LLM_KEY}, timeout=5)["data"]]
+                h["llm"] = "ok" if LLM_MODEL in ids else "loading"
+            except Exception:
+                h["llm"] = "loading"
+            try:
+                urllib.request.urlopen(CUOPT + "/cuopt/health", timeout=5)
+                h["cuopt"] = "ok"
+            except Exception:
+                h["cuopt"] = "loading"
+            return h
+
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, fmt, *a):
+                pass
+
+            def send(self, code, body, ctype="application/json"):
+                if not isinstance(body, bytes):
+                    body = json.dumps(body).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                p = self.path.split("?")[0]
+                if p == "/":
+                    return self.send(200, E["PLANNER_UI"].encode(), "text/html; charset=utf-8")
+                if p == "/api/health":
+                    return self.send(200, health())
+                if p == "/api/samples":
+                    return self.send(200, {n: rows(n) for n in ("depot", "stops", "vehicles", "jobs")})
+                if p == "/api/last":
+                    return self.send(200, STATE["last"] or {})
+                if p.startswith("/vendor/"):
+                    base = p.rsplit("/", 1)[-1]
+                    f = os.path.join(DATA, "vendor", "maplibre-" + E["MAPLIBRE_VERSION"], base)
+                    if STATE["map"] == "ok" and base in ("maplibre-gl.js", "maplibre-gl.mjs", "maplibre-gl.css") and os.path.exists(f):
+                        ct = "text/css" if base.endswith(".css") else "text/javascript"
+                        with open(f, "rb") as fh:
+                            return self.send(200, fh.read(), ct)
+                return self.send(404, {"error": "not found"})
+
+            def do_POST(self):
+                p = self.path.split("?")[0]
+                try:
+                    n = int(self.headers.get("Content-Length") or 0)
+                    if n > 200000:
+                        return self.send(413, {"error": "request too large"})
+                    body = json.loads(self.rfile.read(n).decode() or "{}")
+                    if p == "/api/chat":
+                        msg = str(body.get("message", "")).strip()[:4000]
+                        if not msg:
+                            return self.send(400, {"error": "empty message"})
+                        return self.send(200, chat(body.get("history") or [], msg))
+                    if p == "/api/solve":
+                        task = body.get("task")
+                        if task not in DETERMINISTIC:
+                            return self.send(400, {"error": "task must be routing, breakdown or schedule"})
+                        return self.send(200, {"reply": "Solved without the agent.", "steps": [], "plan": DETERMINISTIC[task]()})
+                    return self.send(404, {"error": "not found"})
+                except Exception as e:
+                    log("request failed:", type(e).__name__, str(e)[:300])
+                    return self.send(500, {"error": type(e).__name__ + ": " + str(e)[:500]})
+
+
+        def main():
+            write_samples()
+            if "--selftest" in sys.argv:
+                b, _ = routing_payload(routing_params({"time_windows": [{"stop": 12, "earliest": "14:00", "latest": "19:00"}]}))
+                j, _ = jobs_payload({"machines": 3, "precedences": [[4, 7]]})
+                print(json.dumps({"routing": b, "milp": j}))
+                return
+            if "--selftest-results" in sys.argv:
+                # Recorded shape of a breakdown solve: the agent sent vehicles 2 with
+                # van 2 excluded; demand exceeds van space, so prizes are active and
+                # the solver cost is negative.
+                p = routing_params({"vehicles": 2, "exclude_vehicles": [2]})
+                b, ctx = routing_payload(p)
+                sr = {"status": 0, "solution_cost": -7929.27, "vehicle_data": {
+                    "0": {"route": [0, 1, 2, 3, 0], "arrival_stamp": [420, 440, 460, 480, 500]},
+                    "1": {"route": [0, 10, 11, 0], "arrival_stamp": [420, 445, 470, 495]}}}
+                r = routing_result(p, ctx, sr, 0.1)
+                print(json.dumps({"vans": ctx["vans"], "prizes": "prizes" in b["task_data"], "routing": r,
+                                  "feasible": schedule_note("FeasibleFound"), "optimal": schedule_note("Optimal"),
+                                  "timelimit_primal": schedule_note("TimeLimit", True),
+                                  "timelimit_empty": schedule_note("TimeLimit"),
+                                  "infeasible": schedule_note("Infeasible")}))
+                return
+            if "--selftest-skills" in sys.argv:
+                # argv: --selftest-skills TARBALL SHA256 OUTDIR
+                i = sys.argv.index("--selftest-skills")
+                try:
+                    with open(sys.argv[i + 1], "rb") as f:
+                        blob = read_capped(f)
+                    print(json.dumps({"files": extract_skills(blob, sys.argv[i + 2], sys.argv[i + 3])}))
+                except ValueError as e:
+                    print(json.dumps({"error": str(e)}))
+                return
+            threading.Thread(target=vendor_maplibre, daemon=True).start()
+            threading.Thread(target=fetch_skills, daemon=True).start()
+            log("listening on 3000")
+            ThreadingHTTPServer(("0.0.0.0", 3000), H).serve_forever()
+
+
+        main()
+      PLANNER_UI: |
+        <!doctype html>
+        <html lang="en"><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>cuOpt Planning Agent</title>
+        <link rel="stylesheet" href="/vendor/maplibre-gl.css">
+        <style>
+        body{margin:0;font:14px/1.4 system-ui,sans-serif;color:#1d2329;background:#f6f7f9}
+        header{padding:10px 16px;background:#1d2329;color:#fff;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+        header b{font-size:16px}.pill{padding:2px 8px;border-radius:10px;background:#444;font-size:12px}
+        .ok{background:#2e7d32}.wait{background:#b26a00}
+        main{display:grid;grid-template-columns:minmax(300px,420px) 1fr;gap:12px;padding:12px;height:calc(100vh - 70px);box-sizing:border-box}
+        #left{display:flex;flex-direction:column;gap:8px;min-height:0}
+        #log{flex:1;overflow:auto;background:#fff;border:1px solid #d5d9de;border-radius:6px;padding:8px}
+        .u{color:#0b5394;margin:6px 0}.a{white-space:pre-wrap;margin:6px 0}.t{color:#666;font-size:12px}
+        textarea{width:100%;box-sizing:border-box;height:70px}button{padding:6px 10px;cursor:pointer}
+        #right{display:flex;flex-direction:column;gap:8px;min-height:0}
+        #map{flex:1;min-height:300px;border:1px solid #d5d9de;border-radius:6px;background:#eef2f5}
+        #gantt{background:#fff;border:1px solid #d5d9de;border-radius:6px;overflow:auto;max-height:45%}
+        #summary{background:#fff;border:1px solid #d5d9de;border-radius:6px;padding:8px;max-height:30%;overflow:auto;font-size:13px}
+        .row{display:flex;gap:6px;flex-wrap:wrap}
+        </style></head><body>
+        <header><b>cuOpt Planning Agent</b>
+        <span>Model <span id="s-llm" class="pill">...</span></span>
+        <span>cuOpt <span id="s-cuopt" class="pill">...</span></span>
+        <span>Map <span id="s-map" class="pill">...</span></span>
+        <span class="t" style="color:#bbb">Sample: depot D, 25 stops, 3 vans of 40 crates, 12 jobs on 3 machines</span></header>
+        <main><section id="left">
+        <div id="log"></div>
+        <div class="row">
+        <button data-q="Plan tomorrow's deliveries from the sample CSV: 3 vans of 40 crates, depot opens 07:00 and closes 19:00, stop 12 only after 14:00.">Task 1</button>
+        <button data-q="Van 2 broke down at the depot. Re-plan with the other two vans.">Task 2</button>
+        <button data-q="Schedule 12 jobs on 3 machines from the sample jobs table, minimize makespan, job 4 must finish before job 7 starts.">Task 3</button>
+        <button data-q="What if demand grows 15 percent at every stop?">What-if</button></div>
+        <textarea id="q" placeholder="Ask for a plan in plain English"></textarea>
+        <div class="row"><button id="send">Send to the agent</button>
+        <span class="t">Solve without the agent:</span>
+        <button data-d="routing">Routes</button><button data-d="breakdown">Van 2 down</button><button data-d="schedule">Schedule</button></div>
+        </section><section id="right"><div id="map"></div><div id="gantt"></div><div id="summary">No plan yet.</div></section></main>
+        <script>
+        var chatLog = [], map = null, COLORS = ["#1565c0", "#c62828", "#2e7d32", "#6a1b9a", "#ef6c00", "#00838f"];
+        function el(id) { return document.getElementById(id); }
+        function say(cls, text) { var d = document.createElement("div"); d.className = cls; d.textContent = text; el("log").appendChild(d); el("log").scrollTop = 1e9; }
+        function pill(id, v) { var p = el(id); p.textContent = v; p.className = "pill " + (v === "ok" ? "ok" : "wait"); }
+        function status() {
+          fetch("/api/health").then(function (r) { return r.json(); }).then(function (h) {
+            pill("s-llm", h.llm); pill("s-cuopt", h.cuopt); pill("s-map", h.map);
+            if (h.map === "ok" && !map) loadMap();
+          }).catch(function () {});
+        }
+        function loadMap() {
+          var s = document.createElement("script"); s.src = "/vendor/maplibre-gl.js";
+          s.onload = initMap;
+          s.onerror = function () { import("/vendor/maplibre-gl.mjs").then(function (m) { window.maplibregl = m.default || m; initMap(); }).catch(function () {}); };
+          document.head.appendChild(s);
+        }
+        function initMap() {
+          if (map || !window.maplibregl) return;
+          map = new maplibregl.Map({ container: "map", center: [13.405, 52.52], zoom: 11.5,
+            style: { version: 8, sources: {}, layers: [{ id: "bg", type: "background", paint: { "background-color": "#eef2f5" } }] } });
+          map.on("load", function () { fetch("/api/last").then(function (r) { return r.json(); }).then(draw); });
+        }
+        function draw(plan) {
+          if (!plan || !plan.kind) return;
+          summary(plan);
+          if (plan.kind === "schedule") { gantt(plan); return; }
+          el("gantt").replaceChildren();
+          if (!map || !map.loaded()) return;
+          var feats = [];
+          plan.stops.forEach(function (s) { feats.push({ type: "Feature", properties: { kind: "stop", color: "#555" }, geometry: { type: "Point", coordinates: [s.lon, s.lat] } }); });
+          feats.push({ type: "Feature", properties: { kind: "depot", color: "#000" }, geometry: { type: "Point", coordinates: [plan.depot.lon, plan.depot.lat] } });
+          plan.routes.forEach(function (r, i) {
+            feats.push({ type: "Feature", properties: { kind: "route", color: COLORS[i % COLORS.length] },
+              geometry: { type: "LineString", coordinates: r.legs.map(function (l) { return [l.lon, l.lat]; }) } });
+          });
+          var data = { type: "FeatureCollection", features: feats };
+          if (map.getSource("plan")) { map.getSource("plan").setData(data); return; }
+          map.addSource("plan", { type: "geojson", data: data });
+          map.addLayer({ id: "routes", type: "line", source: "plan", filter: ["==", ["get", "kind"], "route"], paint: { "line-color": ["get", "color"], "line-width": 3 } });
+          map.addLayer({ id: "points", type: "circle", source: "plan", filter: ["!=", ["get", "kind"], "route"],
+            paint: { "circle-color": ["get", "color"], "circle-radius": ["case", ["==", ["get", "kind"], "depot"], 9, 5] } });
+        }
+        // Plan text comes from the solver and the model, so it is only ever set
+        // through textContent or SVG attributes, never parsed as HTML.
+        function node(tag, text, style) {
+          var n = document.createElement(tag);
+          if (text !== undefined) n.textContent = String(text);
+          if (style) n.style.color = style;
+          return n;
+        }
+        function line(box, parts) {
+          var d = document.createElement("div");
+          parts.forEach(function (p) { d.appendChild(typeof p === "string" ? document.createTextNode(p) : p); });
+          box.appendChild(d);
+        }
+        function summary(p) {
+          var box = el("summary");
+          box.replaceChildren();
+          if (p.kind === "routing") {
+            line(box, [node("b", "Status:"), " " + p.status + " (" + p.solve_seconds + " s). ", node("b", "Driving:"), " " + p.travel_min + " min"]);
+            (p.notes || []).forEach(function (n) { line(box, [node("b", "Note:"), " " + n]); });
+            p.routes.forEach(function (r, i) {
+              line(box, [node("span", "Van " + r.van, COLORS[i % COLORS.length]), " (" + r.load + " crates): " +
+                r.legs.map(function (l) { return (l.stop ? l.stop : "D") + " " + l.eta; }).join(" -> ")]);
+            });
+            if (p.unserved.length) line(box, [node("b", "Unserved:"), " " + p.unserved.map(function (u) { return u.stop + " (" + u.demand + ")"; }).join(", ") + " - " + p.unserved[0].reason]);
+          } else {
+            line(box, [node("b", "Status:"), " " + p.status + (p.status_note ? ", " + p.status_note : "") + " (" + p.solve_seconds + " s). ", node("b", "Makespan:"),
+              " " + p.makespan_min + " min. Precedences: " + JSON.stringify(p.precedences)]);
+          }
+        }
+        function svgEl(tag, attrs, text) {
+          var n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+          Object.keys(attrs).forEach(function (k) { n.setAttribute(k, String(attrs[k])); });
+          if (text !== undefined) n.textContent = String(text);
+          return n;
+        }
+        function gantt(p) {
+          var W = 900, rowH = 34, H = p.machines * rowH + 30, span = p.makespan_min || 1, sx = (W - 90) / span;
+          var svg = svgEl("svg", { width: W, height: H, "font-size": 11 });
+          for (var m = 1; m <= p.machines; m++) svg.appendChild(svgEl("text", { x: 4, y: (m - 1) * rowH + 22 }, "Machine " + m));
+          p.bars.forEach(function (b, i) {
+            var x = 80 + b.start * sx, y = (b.machine - 1) * rowH + 6, w = Math.max(2, (b.end - b.start) * sx);
+            svg.appendChild(svgEl("rect", { x: x, y: y, width: w, height: rowH - 10, fill: COLORS[i % COLORS.length], opacity: 0.8 }));
+            svg.appendChild(svgEl("text", { x: x + 3, y: y + 16, fill: "#fff" }, "J" + b.job));
+          });
+          svg.appendChild(svgEl("text", { x: 80, y: H - 6 }, "0"));
+          svg.appendChild(svgEl("text", { x: W - 60, y: H - 6 }, span + " min"));
+          el("gantt").replaceChildren(svg);
+        }
+        function done(r) {
+          if (r.error) { say("a", "Error: " + r.error); return; }
+          (r.steps || []).forEach(function (s) { say("t", "tool " + s.tool + " " + JSON.stringify(s.args) + (s.ok ? "" : " (failed)")); });
+          say("a", r.reply); chatLog.push({ role: "assistant", content: r.reply }); draw(r.plan);
+        }
+        function send(text) {
+          if (!text) return; say("u", text); chatLog.push({ role: "user", content: text }); say("t", "working...");
+          fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text, history: chatLog.slice(0, -1) }) })
+            .then(function (r) { return r.json(); }).then(done).catch(function (e) { say("a", "Error: " + e); });
+        }
+        el("send").onclick = function () { send(el("q").value.trim()); el("q").value = ""; };
+        document.querySelectorAll("[data-q]").forEach(function (b) { b.onclick = function () { send(b.getAttribute("data-q")); }; });
+        document.querySelectorAll("[data-d]").forEach(function (b) { b.onclick = function () {
+          say("t", "solving without the agent: " + b.textContent);
+          fetch("/api/solve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task: b.getAttribute("data-d") }) })
+            .then(function (r) { return r.json(); }).then(done); }; });
+        status(); setInterval(status, 10000);
+        </script></body></html>
