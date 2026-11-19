@@ -2,15 +2,20 @@
 
 Plan delivery routes and job schedules in plain English with NVIDIA cuOpt and a local NVIDIA Nemotron 3.5 Lightning model, served by vLLM, on one GPU. The planner gives the model a small set of solver tools, builds the cuOpt routing or scheduling request from the model's tool call, and shows the result on a map and a Gantt chart. The planner is configured to call the vLLM server on this instance; no hosted model API is configured.
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3MJZSZtBvP7HOHkxRYmvvjUoeUQ)
+
+Launchable ID: env-3MJZSZtBvP7HOHkxRYmvvjUoeUQ
+
 Inspired by NVIDIA's cuOpt agent example (NVIDIA/cuopt-examples).
 
 - Default compute: 1x NVIDIA L40S 48GB. The compose file gives vLLM 55 percent of GPU memory (`--gpu-memory-utilization 0.55`) and runs cuOpt on the same GPU.
-- Default disk: 200 GiB.
+- Default disk: 256 GiB.
+- First deploy: ready in about 23 minutes (image pulls and the model download).
 
 ## What you get
 
-- **Planner page** on port 3000, configured as the Secure Link `open-planner`: a chat box, a map, a Gantt chart and a status strip that reports the health of the local model and of cuOpt.
-- **NVIDIA cuOpt server** (HTTP API on port 5000 inside the compose network). The compose file attaches it only to the `solver` network, declared `internal: true`, which it shares with the planner. The compose file starts it after vLLM reports healthy.
+- **Planner page** on port 3000, configured as the Secure Link `open-planner`: a chat box, a map, a Gantt chart and a status strip that reports the health of the local model and of cuOpt. The map view needs a browser with WebGL2 support; the chat, the solves and the Gantt chart do not.
+- **NVIDIA cuOpt server** (HTTP API on port 5000 inside the compose network). The compose file attaches it only to the `solver` network, declared `internal: true`, which it shares with the planner, so the cuOpt container has no internet access. The compose file starts it after vLLM reports healthy.
 - **NVIDIA Nemotron 3.5 Lightning** served by vLLM as `nemotron-planner` on localhost:8000 (OpenAI-compatible API).
 - **Sample data**: a depot, 25 delivery stops, 3 vans of 40 crates and 12 jobs for 3 machines. All sample data is synthetic.
 
@@ -61,11 +66,11 @@ Everything lives under `/home/ubuntu/workspace/cuopt-planner` on the instance:
 - `plans/` every solved plan as JSON
 - `vendor/` and `skills/` files fetched on first start
 
-Brev keeps the instance disk when you Stop the instance and removes it when you Delete the instance.
+This folder survives Stop and Start: in the last smoke the saved plans, the skill files and the model cache were still there after Start, and the model was not downloaded again. Delete removes the instance and this folder.
 
 ## Stop and delete
 
-- **Stop** pauses the instance. All three services are set to `restart: unless-stopped`; after Start, check the status strip and see [docs/troubleshooting.md](docs/troubleshooting.md) if a service is not `ok`.
+- **Stop** pauses the instance. All three services are set to `restart: unless-stopped`. In the last smoke all three services came back on their own after Start, about 7 minutes later, with no manual step. If a service is not `ok` in the status strip, see [docs/troubleshooting.md](docs/troubleshooting.md).
 - **Delete** removes the instance and everything on it.
 
 ## Troubleshooting
@@ -80,7 +85,7 @@ Plans are suggestions from a solver working on the data you give it. Check route
 
 Current versions: vLLM v0.27.1, Nemotron 3.5 Lightning 30B-A3B NVFP4, cuOpt 26.10.1, MapLibre GL JS 6.19.0, NVIDIA/skills e8f43c17.
 
-Last smoke: not yet run
+Last smoke: 2026-11-19, fresh deploy on AWS g6e.xlarge (1x L40S): ready in about 23 minutes; services came back on their own after Stop and Start
 
 - vllm/vllm-openai v0.27.1 (pinned by digest)
 - nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 at revision bee7596271d1495f6992ae224aefde4410e816b8

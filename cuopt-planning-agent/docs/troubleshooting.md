@@ -32,6 +32,10 @@ Wait until `curl -s http://localhost:8000/v1/models` lists `nemotron-planner`, t
 
 The planner downloads MapLibre GL JS from registry.npmjs.org on first start and uses it only if its sha512 matches the pinned value. Only the map view needs this library; the solve requests do not. Check outbound access, then `docker compose restart planner`.
 
+## The map stays empty
+
+The map view draws with WebGL2. If your browser has WebGL2 turned off or unavailable (for example some remote desktops and virtual machines), the map stays empty while the chat, the solves and the Gantt chart keep working. Open the Secure Link in a browser with WebGL2 enabled.
+
 ## The agent does not call a tool
 
 Use the Solve without the agent buttons to check cuOpt on its own. Then ask again with explicit numbers, for example the van count, capacity and times.
