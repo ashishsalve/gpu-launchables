@@ -1,26 +1,26 @@
-RAPIDS Data Science with cuDF and cuML
+CUDA Kernel Engineer Agent on Nemotron
 Copyright 2026 The gpu-launchables authors
 
-The files in this folder (README.md, compose.yaml and docs/) are licensed
-under the Apache License, Version 2.0, reproduced in full below.
+The files in this folder (README.md, setup.sh and docs/) are licensed under the Apache License, Version 2.0, reproduced in full below.
 
 Third-party software
 --------------------
 This environment does not include or modify upstream source code. It pulls
-the following upstream container image and conda package at deploy time,
-each distributed under its own licenses:
+the following upstream software at deploy time, each distributed under its
+own license terms. The sandbox image is assembled from these components,
+each under its own licence.
 
-- RAPIDS - https://github.com/rapidsai - Apache License 2.0, Copyright NVIDIA
-  CORPORATION. Image: rapidsai/notebooks (https://github.com/rapidsai/docker,
-  Apache License 2.0). The image is built on NVIDIA CUDA base images, which
-  carry the NVIDIA Deep Learning Container License.
-- XGBoost 3.4.2, CUDA build (https://github.com/dmlc/xgboost) - Apache
-  License 2.0. Installed from conda when the container starts, together with
-  the CUDA runtime libraries it depends on, which carry their own NVIDIA
-  license terms.
-- Packages inside that image keep their own licenses, including Polars
-  (MIT), scikit-learn (BSD 3-Clause), pandas
-  (BSD 3-Clause), Dask (BSD 3-Clause) and JupyterLab (BSD 3-Clause).
+- NVIDIA NemoClaw and OpenShell - Apache-2.0
+- LangChain Deep Agents Code - MIT
+- vLLM - Apache-2.0. Image: vllm/vllm-openai v0.27.1
+- NVIDIA Nemotron 3.5 Lightning - OpenMDW-1.1
+- NVIDIA skills - Apache-2.0 (code), CC-BY-4.0 (skills)
+- NVIDIA TileGym - MIT
+- PyTorch - BSD-3-Clause; Triton - MIT; CuPy - MIT; cuTile - Apache-2.0
+- code-server - MIT
+- nginx - BSD-2-Clause
+- NVIDIA CUDA base image - NVIDIA Deep Learning Container License
+- Nsight Compute and Nsight Systems - NVIDIA license terms
 
                                  Apache License
                            Version 2.0, January 2004
