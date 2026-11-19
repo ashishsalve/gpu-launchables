@@ -1,0 +1,674 @@
+# RAPIDS data science agent with Hermes Agent on one NVIDIA GPU (Docker Compose).
+#
+# Services:
+#   vllm    - serves the NVIDIA Nemotron 3.5 Lightning model under the name
+#             "nemotron" on the compose network (http://vllm:8000/v1). Published
+#             on the instance loopback only (127.0.0.1:8001).
+#   agent   - Hermes Agent (Nous Research, MIT, third-party open source). On
+#             first start it installs Hermes from a pinned source archive with
+#             its locked dependency set (uv.lock, hash-checked), installs a
+#             pinned list of NVIDIA Agent Skills plus two bundled skills, writes
+#             its configuration, then serves the Hermes web dashboard on port
+#             9119 behind a generated login.
+#   jupyter - JupyterLab on the RAPIDS image. Its terminal has the "agent"
+#             command, which opens the Hermes terminal UI.
+#
+# Launch parameters:
+#   MAX_MODEL_LEN               - model context window in tokens (default 65536;
+#                                 Hermes Agent needs a window of at least 64000).
+#   VLLM_GPU_MEMORY_UTILIZATION - share of GPU memory vLLM may use (default
+#                                 0.55); the rest is left for RAPIDS.
+#   HF_TOKEN                    - optional Hugging Face read token, no default.
+# Parameters are read by the first `docker compose up` and kept in each
+# container's configuration. HF_TOKEN reaches only the vllm service
+# environment.
+#
+# Pinned images and sources:
+#   vllm/vllm-openai:v0.27.1 (+ digest) - the vLLM release named on the
+#     Nemotron 3.5 Lightning model card for this checkpoint.
+#   nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 at Hugging Face
+#     revision bee7596271d1495f6992ae224aefde4410e816b8.
+#   rapidsai/notebooks:26.10-cuda12-py3.12 (+ digest) - RAPIDS 26.10 release
+#     image (cuDF, cuDF-Polars, cuML, cuGraph), CUDA 12, Python 3.12.
+#   xgboost=3.4.2=cuda129_pyh5c66634_0 - CUDA build of XGBoost, installed
+#     from CONDA_EXTRA_PACKAGES on the first start of each container; a
+#     done-marker inside the container skips it on later restarts.
+#   Hermes Agent v0.23.2, commit ae2a81ccc00e9b7c06301523e5bb09608397149c,
+#     source archive sha256 checked; its Python dependencies are installed
+#     from the project's uv.lock with hash checking (uv 0.13.5, the uv version
+#     the Hermes project pins; release archive sha256 checked). Hermes runs on
+#     its own CPython 3.14.9 (the Python its uv.lock targets), installed by
+#     uv 0.13.5 under the workspace; notebooks and the code Hermes runs use the
+#     RAPIDS Python 3.12.
+#   NVIDIA/skills commit e8f43c17b6ed0e8888ad21a447f63b0617849f71, archive
+#     sha256 checked; only the skills listed in agent-init.py are installed.
+#   libgcc=15.1.0=h767d61c_4 (conda-forge) - provides libatomic.so.1, which
+#     the Node.js runtime Hermes uses to build its dashboard needs and the
+#     RAPIDS image lacks. Installed once by agent-init.py into its own conda
+#     environment under the workspace (the base environment is not changed);
+#     only libatomic.so.1 is put on the dashboard's library path.
+#
+# Hermes always runs from its own virtual environment and puts that
+# environment first on PATH inside its own process, so PATH set before Hermes
+# starts does not reach agent tool calls. Instead, Hermes sources
+# hermes/terminal-init.sh (terminal.shell_init_files in its config) before
+# every terminal command; that file puts the RAPIDS Python (/opt/conda/bin)
+# first, so `python` in agent tool calls imports cuDF. The "agent" command
+# and the dashboard also start with /opt/conda/bin first on PATH.
+#
+# Each container has its own Hermes home: Hermes keeps its gateway runtime
+# state (gateway.sock, gateway.pid, gateway_state.json) in HERMES_HOME, and a
+# gateway started in one container cannot be reached from another. The
+# dashboard (agent service) uses workspace/hermes; the "agent" command in the
+# JupyterLab terminal uses workspace/hermes-terminal, whose config.yaml and
+# skills/ are links to the ones in workspace/hermes, so both use the same
+# model, settings and skills.
+#
+# Upgrades: after changing this file, run
+#   sudo docker compose up -d --force-recreate
+# (a change to an embedded config file alone does not recreate a container).
+#
+# Persistence: notebooks, data, the Hermes install, its configuration and the
+# model cache live under /home/ubuntu/workspace on the host, which survives
+# stop and is destroyed on delete.
+
+name: rapids-data-science-agent
+
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967
+    restart: unless-stopped
+    ipc: host
+    environment:
+      MAX_MODEL_LEN: "${MAX_MODEL_LEN:-65536}"
+      VLLM_GPU_MEMORY_UTILIZATION: "${VLLM_GPU_MEMORY_UTILIZATION:-0.55}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+      VLLM_HUMMING_MOE_GEMM_TYPE: "indexed"
+      VLLM_USE_DEEP_GEMM: "0"
+    volumes:
+      - /home/ubuntu/workspace/huggingface:/root/.cache/huggingface
+    entrypoint:
+      - /bin/bash
+      - -c
+      # Model card serving flags for Nemotron 3.5 Lightning NVFP4. An explicit
+      # --max-num-seqs keeps the Mamba cache inside the reduced memory share.
+      - 'set -euo pipefail; exec vllm serve nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 --revision bee7596271d1495f6992ae224aefde4410e816b8 --served-model-name nemotron --host 0.0.0.0 --port 8000 --max-model-len "$$MAX_MODEL_LEN" --gpu-memory-utilization "$$VLLM_GPU_MEMORY_UTILIZATION" --max-num-seqs 4 --enable-prefix-caching --enable-auto-tool-choice --tool-call-parser qwen3_coder --quantization modelopt_fp4 --moe-backend humming --linear-backend humming --mamba-backend flashinfer --mamba-cache-mode align --mamba-ssu-algorithm simple --reasoning-parser nemotron_v3'
+    ports:
+      # Instance loopback only: reach the API with `brev port-forward`.
+      - "127.0.0.1:8001:8000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1800s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  agent:
+    image: rapidsai/notebooks:26.10-cuda12-py3.12@sha256:3f7e9bd6335860a41ae86802516a45eccc9568007b7bb3efef8cf359ab1f7321
+    restart: unless-stopped
+    # A minimal init as PID 1 reaps the processes the agent's tools start.
+    init: true
+    # Root so the agent can write the host workspace folder (created by Docker
+    # as root); the image entrypoint activates the RAPIDS conda environment.
+    user: root
+    environment:
+      CONDA_EXTRA_PACKAGES: "xgboost=3.4.2=cuda129_pyh5c66634_0"
+      HERMES_HOME: "/home/rapids/notebooks/workspace/hermes"
+      OPENAI_BASE_URL: "http://vllm:8000/v1"
+      # The local model needs no key; Hermes is given a placeholder value.
+      OPENAI_API_KEY: "none"
+    shm_size: "1gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    configs:
+      - source: agent_init
+        target: /opt/agent-init.py
+      - source: skill_polars_gpu_engine
+        target: /opt/skills/polars-gpu-engine/SKILL.md
+      - source: skill_cugraph_analytics
+        target: /opt/skills/cugraph-analytics/SKILL.md
+    # One-time setup (idempotent), then the Hermes dashboard behind a login
+    # whose password is generated on first start into an owner-only file.
+    # Fails closed: if setup fails or the password file is missing or empty,
+    # the dashboard does not start and the container exits (and is retried).
+    command:
+      - "bash"
+      - "-c"
+      - 'set -euo pipefail; M=/opt/conda/.conda-extra-packages.done; [ "$$(cat "$$M" 2>/dev/null || true)" = "$$CONDA_EXTRA_PACKAGES" ] || { timeout 900 conda install -n base -y "$$CONDA_EXTRA_PACKAGES" || { echo "agent: installing $$CONDA_EXTRA_PACKAGES failed. See: sudo docker compose logs agent" >&2; exit 1; }; printf "%s" "$$CONDA_EXTRA_PACKAGES" > "$$M"; }; umask 077; H=/home/rapids/notebooks/workspace/hermes; python /opt/agent-init.py && [ -s "$$H/dashboard-password" ] || { echo "agent: setup failed or the dashboard login file is missing; the Hermes dashboard will not start. See: sudo docker compose logs agent" >&2; exit 1; }; export HERMES_DASHBOARD_BASIC_AUTH_USERNAME=hermes; HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="$$(cat "$$H/dashboard-password")"; export HERMES_DASHBOARD_BASIC_AUTH_PASSWORD; export PATH="/opt/conda/bin:$$PATH"; unset VIRTUAL_ENV; export LD_LIBRARY_PATH="$$H/lib$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}"; cd /home/rapids/notebooks/workspace; exec "$$H/venv/bin/hermes" dashboard --host 0.0.0.0 --port 9119 --no-open'
+    volumes:
+      - /home/ubuntu/workspace/rapids-data-science-agent:/home/rapids/notebooks/workspace
+    ports:
+      # Served to deployers only through the Brev Secure Link "hermes".
+      - "9119:9119"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 9119), 5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 900s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  jupyter:
+    image: rapidsai/notebooks:26.10-cuda12-py3.12@sha256:3f7e9bd6335860a41ae86802516a45eccc9568007b7bb3efef8cf359ab1f7321
+    restart: unless-stopped
+    user: root
+    environment:
+      CONDA_EXTRA_PACKAGES: "xgboost=3.4.2=cuda129_pyh5c66634_0"
+      # Not the agent service's home: gateway state must not be shared.
+      HERMES_HOME: "/home/rapids/notebooks/workspace/hermes-terminal"
+      OPENAI_BASE_URL: "http://vllm:8000/v1"
+      OPENAI_API_KEY: "none"
+    shm_size: "1gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    # On first start, generate a random JupyterLab token into the workspace
+    # (owner-only file mode) and reuse it after every restart. The "agent"
+    # command in the JupyterLab terminal opens the Hermes terminal UI.
+    command:
+      - "bash"
+      - "-c"
+      - 'set -euo pipefail; M=/opt/conda/.conda-extra-packages.done; [ "$$(cat "$$M" 2>/dev/null || true)" = "$$CONDA_EXTRA_PACKAGES" ] || { timeout 900 conda install -n base -y "$$CONDA_EXTRA_PACKAGES" || { echo "jupyter: installing $$CONDA_EXTRA_PACKAGES failed. See: sudo docker compose logs jupyter" >&2; exit 1; }; printf "%s" "$$CONDA_EXTRA_PACKAGES" > "$$M"; }; umask 077; T=/home/rapids/notebooks/workspace/.jupyter-token; [ -s "$$T" ] || python -c "import secrets; print(secrets.token_hex(24))" > "$$T"; [ -s "$$T" ] || { echo "jupyter: the JupyterLab login file is missing or empty; JupyterLab will not start. See: sudo docker compose logs jupyter" >&2; exit 1; }; JUPYTER_TOKEN="$$(cat "$$T")"; export JUPYTER_TOKEN; ln -sf /home/rapids/notebooks/workspace/hermes/bin/agent /usr/local/bin/agent; exec jupyter-lab --notebook-dir=/home/rapids/notebooks --ip=0.0.0.0 --port=8888 --no-browser --allow-root'
+    volumes:
+      - /home/ubuntu/workspace/rapids-data-science-agent:/home/rapids/notebooks/workspace
+    ports:
+      # Served to deployers only through the Brev Secure Link "open-jupyterlab".
+      - "8888:8888"
+    healthcheck:
+      # /api answers without a token; it proves the server is up.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8888/api', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 120s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+configs:
+  agent_init:
+    content: |
+      #!/usr/bin/env python3
+      # One-time, idempotent setup for the Hermes data science agent.
+      # Standard library only. Prints progress, never a credential.
+      # Hermes is installed only from its lock file with hash checking; there
+      # is no unlocked fallback.
+      # Hermes runs on its own Python 3.14 (the only Python its uv.lock covers),
+      # installed by the pinned uv; analysis code keeps the RAPIDS Python.
+      import hashlib, http.client, os, pathlib, secrets, shutil, subprocess, sys, tarfile, tempfile, time, urllib.error, urllib.request
+
+      WS = pathlib.Path("/home/rapids/notebooks/workspace")
+      HH = pathlib.Path(os.environ.get("HERMES_HOME", str(WS / "hermes")))
+      VENV = HH / "venv"
+      SRC = HH / "hermes-src"
+      PYDIR = HH / "python"
+      STATE = HH / ".state"
+      WORK = HH / ".cache" / "hermes-install"
+      HERMES_PYTHON = "3.14.9"
+      FETCH_TRIES = 5
+      HERMES_REF = "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+      HERMES_URL = "https://github.com/NousResearch/hermes-agent/archive/" + HERMES_REF + ".tar.gz"
+      HERMES_SHA256 = "fe3481973fd7b4f78a4f716110e793b1474ec5eec9d44fc0332c6be40fa9b776"
+      HERMES_EXTRAS = ["web"]
+      UV_VERSION = "0.13.5"
+      UV_URL = "https://github.com/astral-sh/uv/releases/download/" + UV_VERSION + "/uv-x86_64-unknown-linux-gnu.tar.gz"
+      UV_SHA256 = "f68d291c75783122dad58ab77def0e13f3233f358731db5d6d7e8715603b928f"
+      SKILLS_REF = "e8f43c17b6ed0e8888ad21a447f63b0617849f71"
+      SKILLS_URL = "https://codeload.github.com/NVIDIA/skills/tar.gz/" + SKILLS_REF
+      SKILLS_SHA256 = "2ea0fff7f84973fc0c5831942b1ba76e5402042d786695b37162183ddd932a2e"
+      # Exact directory of each skill inside the archive. nvidia-skill-finder
+      # exists twice at this commit (skills/ and plugins/nvidia-skills/skills/).
+      NVIDIA_SKILLS = {
+          "accelerated-computing-cudf": "skills/accelerated-computing-cudf",
+          "cuml": "skills/cuml",
+          "nvidia-skill-finder": "plugins/nvidia-skills/skills/nvidia-skill-finder",
+      }
+      BUNDLED_SKILLS = pathlib.Path("/opt/skills")
+      # libatomic.so.1 for the Node.js runtime that builds the dashboard web
+      # UI (the RAPIDS image has no libatomic1). Exact conda-forge version and
+      # build, in its own environment so the RAPIDS base env is untouched;
+      # only libatomic.so.1 is linked into HH/lib (the dashboard library path).
+      CONDA = "/opt/conda/bin/conda"
+      LIBATOMIC_SPEC = "libgcc=15.1.0=h767d61c_4"
+      LIBATOMIC_ENV = HH / "libatomic-env"
+      LIBDIR = HH / "lib"
+      # The RAPIDS Python first on PATH for the code the agent runs. Hermes
+      # puts its own venv first on PATH inside its process, so PATH set before
+      # Hermes starts does not reach tool calls; Hermes sources TERMINAL_INIT
+      # (terminal.shell_init_files) before every terminal command instead.
+      RAPIDS_BIN = "/opt/conda/bin"
+      TERMINAL_INIT = HH / "terminal-init.sh"
+      # Hermes home of the "agent" command in the JupyterLab terminal. Hermes
+      # keeps gateway runtime state in HERMES_HOME, and the jupyter container
+      # cannot reach a gateway the dashboard started in this container, so
+      # the terminal gets its own home; config.yaml and skills/ link to HH.
+      TUI_HOME = WS / "hermes-terminal"
+      TUI_SHARED = ("config.yaml", "skills")
+      MAX_TOKENS = 8192
+      CONFIG = "\n".join([
+          "model:",
+          "  default: \"nemotron\"",
+          "  provider: \"custom\"",
+          "  base_url: \"http://vllm:8000/v1\"",
+          "  api_key: \"none\"",
+          "  max_tokens: " + str(MAX_TOKENS),
+          "agent:",
+          "  disabled_toolsets: []",
+          "terminal:",
+          "  backend: local",
+          "  shell_init_files:",
+          "    - " + str(TERMINAL_INIT),
+          "telemetry:",
+          "  shared_metrics:",
+          "    enabled: false",
+          "    send: false",
+          "",
+      ])
+      START_HERE = "\n".join([
+          "# Start here",
+          "",
+          "1. Open a terminal in JupyterLab (File > New > Terminal).",
+          "2. Run: agent",
+          "3. Paste a task, for example:",
+          "",
+          "   Download the NYC TLC yellow taxi trip records for January to March 2025",
+          "   and the taxi zone lookup into data/. Write and run notebooks/taxi_cpu_vs_gpu.ipynb:",
+          "   fares and trips by pickup zone and hour with pandas on CPU, cudf.pandas,",
+          "   Polars on CPU and Polars with the GPU engine. Check the results match and",
+          "   print a timing table.",
+          "",
+          "Two more tasks are in docs/tasks.md in the Launchable repository:",
+          "tip prediction (scikit-learn vs cuML, XGBoost CPU vs CUDA) and a",
+          "zone-to-zone trip graph with cuGraph (PageRank and Louvain communities).",
+          "The model runs on this GPU (vLLM, model name nemotron).",
+          "",
+      ])
+
+
+      def log(msg):
+          print("agent-init: " + msg, flush=True)
+
+
+      def fail(msg):
+          sys.exit("agent-init: " + msg)
+
+
+      def done(name):
+          return (STATE / name).exists()
+
+
+      def mark(name):
+          (STATE / name).write_text("ok\n")
+
+
+      def run(args, **kw):
+          subprocess.run([str(a) for a in args], check=True, **kw)
+
+
+      def download(url, tmp):
+          digest = hashlib.sha256()
+          with urllib.request.urlopen(url, timeout=600) as resp, open(tmp, "wb") as out:
+              for chunk in iter(lambda: resp.read(1 << 20), b""):
+                  digest.update(chunk)
+                  out.write(chunk)
+          return digest.hexdigest()
+
+
+      def fetch(url, want):
+          # Bounded retry with backoff on HTTP 429, 5xx and network errors.
+          fd, tmp = tempfile.mkstemp(suffix=".tar.gz", dir=str(WORK))
+          os.close(fd)
+          for attempt in range(1, FETCH_TRIES + 1):
+              try:
+                  got = download(url, tmp)
+                  break
+              except urllib.error.HTTPError as e:
+                  if e.code != 429 and e.code < 500:
+                      os.unlink(tmp)
+                      fail("download failed (HTTP " + str(e.code) + ") for " + url)
+                  why = "HTTP " + str(e.code)
+              except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
+                  why = type(e).__name__
+              if attempt == FETCH_TRIES:
+                  os.unlink(tmp)
+                  fail("download failed after " + str(FETCH_TRIES) + " attempts (" + why + ") for " + url)
+              wait = 5 * 2 ** (attempt - 1)
+              log("retry " + str(attempt) + "/" + str(FETCH_TRIES - 1) + " in " + str(wait) + " s (" + why + "): " + url)
+              time.sleep(wait)
+          if got != want:
+              os.unlink(tmp)
+              fail("sha256 mismatch for " + url)
+          return tmp
+
+
+      def safe_members(tf):
+          for m in tf.getmembers():
+              parts = m.name.split("/")
+              if m.name.startswith("/") or ".." in parts:
+                  fail("unsafe path in archive: " + m.name)
+              if m.isfile() or m.isdir():
+                  yield m, parts
+
+
+      def extract_stripped(archive, dest):
+          # Same as tar -xzf ARCHIVE -C DEST --strip-components=1.
+          shutil.rmtree(dest, ignore_errors=True)
+          dest.mkdir(parents=True)
+          with tarfile.open(archive) as tf:
+              for m, parts in safe_members(tf):
+                  if len(parts) < 2 or not parts[1]:
+                      continue
+                  target = dest.joinpath(*parts[1:])
+                  if m.isdir():
+                      target.mkdir(parents=True, exist_ok=True)
+                      continue
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  with tf.extractfile(m) as src, open(target, "wb") as out:
+                      shutil.copyfileobj(src, out)
+                  target.chmod(0o755 if m.mode & 0o111 else 0o644)
+
+
+      def install_hermes():
+          if done("hermes-" + HERMES_REF + "-py" + HERMES_PYTHON):
+              return
+          log("installing Hermes Agent " + HERMES_REF[:12] + " (locked, uv " + UV_VERSION + ", Python " + HERMES_PYTHON + ")")
+          archive = fetch(HERMES_URL, HERMES_SHA256)
+          extract_stripped(archive, SRC)
+          os.unlink(archive)
+          if not (SRC / "uv.lock").is_file():
+              fail("uv.lock missing from the Hermes archive; refusing an unlocked install")
+          uvdir = WORK / "uv"
+          archive = fetch(UV_URL, UV_SHA256)
+          extract_stripped(archive, uvdir)
+          os.unlink(archive)
+          uv = uvdir / "uv"
+          # No global UV_PYTHON: every uv call names its interpreter. Downloads
+          # are "manual": only the explicit `uv python install` below may
+          # fetch, and uv verifies each managed build against its checksum.
+          env = dict(os.environ, UV_CACHE_DIR=str(WORK / "uv-cache"), UV_PYTHON_DOWNLOADS="manual",
+                     UV_PYTHON_INSTALL_DIR=str(PYDIR))
+          env.pop("UV_PYTHON", None)
+          env.pop("VIRTUAL_ENV", None)
+          run([uv, "--version"], env=env)
+          run([uv, "python", "install", HERMES_PYTHON], env=env)
+          found = subprocess.run([str(uv), "python", "find", "--managed-python", HERMES_PYTHON],
+                                 env=env, check=True, capture_output=True, text=True)
+          py = found.stdout.strip()
+          ver = subprocess.run([py, "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"],
+                               check=True, capture_output=True, text=True).stdout.strip()
+          if ver != HERMES_PYTHON:
+              fail("python " + HERMES_PYTHON + " required for Hermes, found " + ver)
+          shutil.rmtree(VENV, ignore_errors=True)
+          run([uv, "venv", "--python", py, VENV], env=env)
+          vpy = VENV / "bin" / "python"
+          lock_txt = WORK / "requirements.lock.txt"
+          extras = []
+          for x in HERMES_EXTRAS:
+              extras += ["--extra", x]
+          run([uv, "export", "--python", py, "--locked", "--no-dev", "--no-emit-project"] + extras +
+              ["--format", "requirements-txt", "-o", lock_txt], cwd=str(SRC), env=env)
+          run([uv, "pip", "install", "--python", vpy, "--require-hashes", "--no-deps", "-r", lock_txt], env=env)
+          # Hermes refuses wheel and sdist builds of itself; it installs editable
+          # from SRC, which stays in place (outside .cache) for the venv to use.
+          run([uv, "pip", "install", "--python", vpy, "--no-deps", "-e", SRC], env=env)
+          log("locked install (uv.lock, uv " + UV_VERSION + ", Python " + HERMES_PYTHON + ")")
+          run([VENV / "bin" / "hermes", "--version"])
+          mark("hermes-" + HERMES_REF + "-py" + HERMES_PYTHON)
+
+
+      def install_skills():
+          dest = HH / "skills"
+          dest.mkdir(parents=True, exist_ok=True)
+          if not done("skills-" + SKILLS_REF):
+              log("installing NVIDIA Agent Skills " + SKILLS_REF[:12])
+              archive = fetch(SKILLS_URL, SKILLS_SHA256)
+              with tarfile.open(archive) as tf:
+                  members = list(safe_members(tf))
+                  for name, rel in sorted(NVIDIA_SKILLS.items()):
+                      want = rel.split("/") + ["SKILL.md"]
+                      hits = [parts for m, parts in members
+                              if m.isfile() and len(parts) >= 2 and parts[1:] == want]
+                      if len(hits) != 1:
+                          fail("skill " + name + " not found exactly once at " + rel + " in " + SKILLS_REF)
+                      prefix = hits[0][:-1]
+                      shutil.rmtree(dest / name, ignore_errors=True)
+                      for m, parts in members:
+                          if not m.isfile() or parts[:len(prefix)] != prefix:
+                              continue
+                          target = (dest / name).joinpath(*parts[len(prefix):])
+                          target.parent.mkdir(parents=True, exist_ok=True)
+                          with tf.extractfile(m) as src, open(target, "wb") as out:
+                              shutil.copyfileobj(src, out)
+                      log("skill " + name + " @ " + SKILLS_REF[:12])
+              os.unlink(archive)
+              mark("skills-" + SKILLS_REF)
+          for skill in sorted(BUNDLED_SKILLS.iterdir()):
+              (dest / skill.name).mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(skill / "SKILL.md", dest / skill.name / "SKILL.md")
+
+
+      def install_libatomic():
+          so = LIBDIR / "libatomic.so.1"
+          if done("libatomic-" + LIBATOMIC_SPEC) and so.exists():
+              return
+          log("installing libatomic (conda-forge " + LIBATOMIC_SPEC + ")")
+          shutil.rmtree(LIBATOMIC_ENV, ignore_errors=True)
+          run([CONDA, "create", "-y", "-p", LIBATOMIC_ENV, "--override-channels", "-c", "conda-forge",
+               LIBATOMIC_SPEC], timeout=900)
+          src = LIBATOMIC_ENV / "lib" / "libatomic.so.1"
+          if not src.exists():
+              fail("libatomic.so.1 missing from " + LIBATOMIC_SPEC + "; the dashboard cannot build its web UI")
+          LIBDIR.mkdir(exist_ok=True)
+          if so.exists() or so.is_symlink():
+              so.unlink()
+          so.symlink_to(src.resolve())
+          mark("libatomic-" + LIBATOMIC_SPEC)
+
+
+      def write_once(path, text, mode=0o600):
+          if not path.exists():
+              part = path.with_name(path.name + ".part")
+              part.write_text(text)
+              part.chmod(mode)
+              part.replace(path)
+
+
+      def ensure_shell_init(path):
+          # config.yaml is written once, so an install made before
+          # shell_init_files existed gets only that entry added under its
+          # terminal: block. Anything unexpected stops setup with a message.
+          text = path.read_text()
+          lines = text.split("\n")
+          entry = str(TERMINAL_INIT)
+          hits = [i for i, line in enumerate(lines) if line.strip().startswith("shell_init_files:")]
+          if hits:
+              if entry in text:
+                  return
+              if len(hits) == 1 and lines[hits[0]].strip() == "shell_init_files: []":
+                  ind = lines[hits[0]][:len(lines[hits[0]]) - len(lines[hits[0]].lstrip(" "))]
+                  lines[hits[0]:hits[0] + 1] = [ind + "shell_init_files:", ind + "  - " + entry]
+              else:
+                  fail(str(path) + " sets terminal.shell_init_files without " + entry
+                       + "; add that path to the list so agent commands use the RAPIDS Python")
+          else:
+              heads = [i for i, line in enumerate(lines) if line.rstrip() == "terminal:"]
+              nxt = lines[heads[0] + 1] if len(heads) == 1 and heads[0] + 1 < len(lines) else ""
+              ind = nxt[:len(nxt) - len(nxt.lstrip(" "))]
+              if len(heads) != 1 or not ind or not nxt.strip():
+                  fail("no single top-level terminal: block in " + str(path)
+                       + "; add terminal.shell_init_files: [" + entry + "] by hand")
+              lines[heads[0] + 1:heads[0] + 1] = [ind + "shell_init_files:", ind + "  - " + entry]
+          part = path.with_name(path.name + ".part")
+          part.write_text("\n".join(lines))
+          part.chmod(path.stat().st_mode & 0o777)
+          part.replace(path)
+          log("added terminal.shell_init_files to " + str(path))
+
+
+      def link_terminal_home():
+          # Idempotent: links are created only where nothing exists, so a
+          # file Hermes or the user put there is kept.
+          TUI_HOME.mkdir(parents=True, exist_ok=True)
+          TUI_HOME.chmod(0o700)
+          for name in TUI_SHARED:
+              link = TUI_HOME / name
+              if not os.path.lexists(link):
+                  link.symlink_to(HH / name)
+                  log("linked " + str(link) + " -> " + str(HH / name))
+
+
+      def main():
+          HH.mkdir(parents=True, exist_ok=True)
+          HH.chmod(0o700)
+          for d in (STATE, WORK, WS / "data", WS / "notebooks"):
+              d.mkdir(parents=True, exist_ok=True)
+          install_hermes()
+          install_skills()
+          install_libatomic()
+          # Always rewritten: the RAPIDS Python first for every agent command.
+          TERMINAL_INIT.write_text("# The RAPIDS Python first for every agent terminal command.\n"
+                                   "PATH=\"" + RAPIDS_BIN + ":$$PATH\"; export PATH\n")
+          TERMINAL_INIT.chmod(0o644)
+          write_once(HH / "config.yaml", CONFIG)
+          ensure_shell_init(HH / "config.yaml")
+          write_once(HH / "dashboard-password", secrets.token_urlsafe(18) + "\n")
+          link_terminal_home()
+          wrapper = "\n".join([
+              "#!" + sys.executable,
+              "import os, sys",
+              "os.environ['HERMES_HOME'] = " + repr(str(TUI_HOME)),
+              "os.environ.pop('VIRTUAL_ENV', None)",
+              "rest = [p for p in os.environ.get('PATH', '').split(':') if p and p != " + repr(RAPIDS_BIN) + "]",
+              "os.environ['PATH'] = ':'.join([" + repr(RAPIDS_BIN) + "] + rest)",
+              "os.chdir(" + repr(str(WS)) + ")",
+              "exe = " + repr(str(VENV / "bin" / "hermes")),
+              "os.execv(exe, [exe] + sys.argv[1:])",
+              "",
+          ])
+          (HH / "bin").mkdir(exist_ok=True)
+          (HH / "bin" / "agent").write_text(wrapper)
+          (HH / "bin" / "agent").chmod(0o755)
+          write_once(WS / "START-HERE.md", START_HERE, 0o644)
+          log("ready hermes=" + HERMES_REF[:12] + " skills=" + SKILLS_REF[:12])
+
+
+      main()
+  skill_polars_gpu_engine:
+    content: |
+      ---
+      name: polars-gpu-engine
+      description: Run Polars queries on the NVIDIA GPU with the cuDF-Polars engine, compare them with the Polars CPU engine, and detect silent CPU fallback.
+      license: Apache-2.0
+      ---
+      # Polars GPU engine (cuDF-Polars)
+
+      Use this skill when a task asks for Polars, or for a dataframe query where
+      Polars is a better fit than pandas (lazy scans of large Parquet files).
+
+      ## Rules
+      1. Build the query lazily: start from pl.scan_parquet(path), chain the
+         filters, joins and aggregations, and execute once with .collect().
+      2. GPU execution: q.collect(engine="gpu"). Unsupported operations fall
+         back to the CPU engine without an error.
+      3. To prove the GPU ran the query, collect with
+         engine=pl.GPUEngine(raise_on_fail=True). If it raises, report the
+         unsupported operation and keep the CPU result.
+      4. Timing: run each engine twice and report the second run; the first
+         run includes start-up and compilation.
+      5. Correctness: sort both results on the group keys and compare with
+         polars.testing.assert_frame_equal(cpu, gpu, check_exact=False).
+      6. Memory: the GPU is shared with the model server. Read only the
+         columns you need and filter early.
+
+      ## Example
+      ```python
+      import time
+      import polars as pl
+      from polars.testing import assert_frame_equal
+
+      q = (
+          pl.scan_parquet("data/yellow_tripdata_2025-0*.parquet")
+          .filter(pl.col("total_amount") > 0)
+          .with_columns(pl.col("tpep_pickup_datetime").dt.hour().alias("hour"))
+          .group_by(["PULocationID", "hour"])
+          .agg(pl.len().alias("trips"), pl.col("total_amount").sum().alias("fares"))
+      )
+
+      def timed(engine):
+          q.collect(engine=engine)
+          t0 = time.perf_counter()
+          out = q.collect(engine=engine)
+          return out, time.perf_counter() - t0
+
+      cpu, t_cpu = timed("cpu")
+      gpu, t_gpu = timed(pl.GPUEngine(raise_on_fail=True))
+      keys = ["PULocationID", "hour"]
+      assert_frame_equal(cpu.sort(keys), gpu.sort(keys), check_exact=False)
+      print(f"Polars CPU {t_cpu:.2f} s, Polars GPU {t_gpu:.2f} s")
+      ```
+  skill_cugraph_analytics:
+    content: |
+      ---
+      name: cugraph-analytics
+      description: Run graph analytics on the NVIDIA GPU with RAPIDS cuGraph (PageRank, Louvain communities, shortest paths) from cuDF edge lists, or accelerate NetworkX code with the nx-cugraph backend.
+      license: Apache-2.0
+      ---
+      # Graph analytics with cuGraph
+
+      Use this skill when a task involves networks: trips between zones,
+      links between accounts, citations, routes.
+
+      ## Rules
+      1. Build the edge list as a cuDF DataFrame with source, destination and
+         an optional weight column. Drop self-loops unless they matter.
+      2. Create the graph: G = cugraph.Graph(directed=True), then
+         G.from_cudf_edgelist(edges, source="src", destination="dst",
+         edge_attr="weight").
+      3. Algorithms: cugraph.pagerank(G), cugraph.louvain(G) on an undirected
+         graph (returns the partition and the modularity),
+         cugraph.sssp(G, source=vertex), cugraph.betweenness_centrality(G).
+      4. Existing NetworkX code: call the algorithm with backend="cugraph", for
+         example networkx.pagerank(G, backend="cugraph"), so the code stays the
+         same and runs on the GPU.
+      5. Report sizes (vertices, edges), the top results joined back to
+         readable names, and the run time of each algorithm.
+
+      ## Example
+      ```python
+      import time
+      import cudf
+      import cugraph
+
+      trips = cudf.read_parquet("data/yellow_tripdata_2025-01.parquet",
+                                columns=["PULocationID", "DOLocationID"])
+      edges = (trips.groupby(["PULocationID", "DOLocationID"]).size()
+               .reset_index(name="weight")
+               .rename(columns={"PULocationID": "src", "DOLocationID": "dst"}))
+      edges = edges[edges.src != edges.dst]
+
+      G = cugraph.Graph(directed=True)
+      G.from_cudf_edgelist(edges, source="src", destination="dst", edge_attr="weight")
+      t0 = time.perf_counter()
+      pr = cugraph.pagerank(G)
+      print(f"PageRank on {G.number_of_vertices()} zones in {time.perf_counter() - t0:.3f} s")
+      print(pr.sort_values("pagerank", ascending=False).head(10))
+      ```
