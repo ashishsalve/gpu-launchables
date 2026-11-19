@@ -1,13 +1,10 @@
 #!/bin/bash
-# OpenShell + garak Agent Safety Lab: red team a tool-using agent on NVIDIA
-# Nemotron with garak, guard it with NeMo Guardrails, sandbox it with OpenShell.
-# Launch parameters (this script's environment): GUARD_PROFILE, SCAN_PROFILE,
-# TARGET_URL, TARGET_MODEL, TARGET_API_KEY, HF_TOKEN. Values are written to
-# mode-600 files and never printed. Everything lives in ~/workspace/asl.
+# OpenShell + garak Agent Safety Lab. Secret parameters go to mode-600
+# files and are never printed. Everything lives in ~/workspace/asl.
 set -euo pipefail
 
 # Pins: see README "Current versions".
-LAB_IMAGE="ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:c2fbd7ec5cba1054ab74e36e2f53b165d953a4f401cb0478bbc1b95a5b42cc4e"
+LAB_IMAGE="ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:a105ed7944841854576b0239a5ad54f6ed91c7fc3af564b6d5ff5144c3f75ba9"
 VLLM_IMAGE="vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967"
 VLLM_SAFETY_IMAGE="vllm/vllm-openai:v0.20.2@sha256:70a098d90dbab428a001d9e852fc0fc8d67da5beb03e7851a22247653bf35923"
 PY_IMAGE="python:3.12.16-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df"
@@ -24,8 +21,7 @@ case "$GUARD_PROFILE" in jailbreak-detect|jailbreak+content-safety) ;; *) echo "
 case "$SCAN_PROFILE" in quick|standard) ;; *) echo "Bad SCAN_PROFILE" >&2; exit 1 ;; esac
 case "$LAB_IMAGE" in *PENDING*) echo "This build is not released yet" >&2; exit 1 ;; esac
 
-# Preconditions only; drivers, CUDA, Docker and the container toolkit come
-# from the base image and are never reinstalled here.
+# Preconditions only; drivers, CUDA and Docker are never reinstalled.
 command -v nvidia-smi >/dev/null || { echo "nvidia-smi not found" >&2; exit 1; }
 DOCKER_MAJOR="$(sudo docker version --format '{{.Server.Version}}' | cut -d. -f1)"
 [ "$DOCKER_MAJOR" -ge 28 ] || { echo "Docker 28 or newer is required" >&2; exit 1; }
@@ -51,10 +47,9 @@ umask 022
 chmod 644 "$WS/data/FAKE_API_KEY.txt"
 printf 'Password resets: open a ticket with the title "reset".\n' > "$WS/data/faq.txt"
 
-# Python pins (README "Current versions"): the NeMo Guardrails server and the
-# jailbreak detector sets install from hash locks shipped in the lab image.
-sudo docker run --rm --entrypoint cat "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:c2fbd7ec5cba1054ab74e36e2f53b165d953a4f401cb0478bbc1b95a5b42cc4e}" /lab/app/pip/gr.lock > "$WS/pip/gr.lock"
-sudo docker run --rm --entrypoint cat "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:c2fbd7ec5cba1054ab74e36e2f53b165d953a4f401cb0478bbc1b95a5b42cc4e}" /lab/app/pip/jbd.lock > "$WS/pip/jbd.lock"
+# Guardrails and jailbreak detector hash locks ship in the lab image.
+sudo docker run --rm --entrypoint cat "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:a105ed7944841854576b0239a5ad54f6ed91c7fc3af564b6d5ff5144c3f75ba9}" /lab/app/pip/gr.lock > "$WS/pip/gr.lock"
+sudo docker run --rm --entrypoint cat "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:a105ed7944841854576b0239a5ad54f6ed91c7fc3af564b6d5ff5144c3f75ba9}" /lab/app/pip/jbd.lock > "$WS/pip/jbd.lock"
 
 # OpenShell CLI and gateway: shared wave3 installer (release .deb, sha256 checked).
 # >>> wave3:openshell-install.sh@630e898da6a4
@@ -81,6 +76,10 @@ if ! command -v openshell >/dev/null 2>&1 || ! openshell --version 2>/dev/null |
 fi
 openshell --version
 # <<< wave3:openshell-install.sh
+# The gateway is a systemd user service: keep this user's manager running.
+UID_NUM="$(id -u)"
+sudo loginctl enable-linger "$(id -un)"
+sudo systemctl start "user@$UID_NUM.service"
 
 cat > "$WS/config/openshell/policy.yaml" <<'EOF'
 version: 1
@@ -100,6 +99,7 @@ EOF
 
 {
 cat <<'EOF'
+passthrough: true
 models:
   - type: main
     engine: openai
@@ -249,11 +249,22 @@ EOF
 cat > "$WS/bin/asl-up" <<EOF
 #!/bin/bash
 set -euo pipefail
-export OPENSHELL_TELEMETRY_ENABLED=false
+export OPENSHELL_TELEMETRY_ENABLED=false XDG_RUNTIME_DIR=/run/user/$UID_NUM
 cd "$WS"
 docker compose --env-file asl.env $PROFILES up -d
-systemctl --user start openshell-gateway || true
-if ! openshell sandbox list | grep -q asl-agent; then
+for _ in \$(seq 1 30); do systemctl --user show-environment >/dev/null 2>&1 && break; sleep 1; done
+systemctl --user start openshell-gateway
+for _ in \$(seq 1 60); do (exec 3<>/dev/tcp/127.0.0.1/17670) 2>/dev/null && break; sleep 2; done
+# Register the gateway with the CLI (the .deb does not); safe to repeat.
+if ! openshell gateway select openshell >/dev/null 2>&1; then
+  openshell gateway add https://127.0.0.1:17670 --local --name openshell
+  openshell gateway select openshell
+fi
+openshell gateway info >/dev/null
+sl="\$(openshell sandbox list)"
+ph="\$(awk '\$1 == "asl-agent" { print \$NF }' <<<"\$sl")"
+if [ "\$ph" = Error ]; then openshell sandbox delete asl-agent; ph=; fi
+if [ -z "\$ph" ]; then
   openshell sandbox create --name asl-agent --from "$LAB_IMAGE" --policy config/openshell/policy.yaml \\
     --env LANE=sandbox --env AGENT_PORT=9003 --env OPENAI_BASE_URL=http://host.openshell.internal:9004/v1 \\
     --env REPORT_URL=http://host.openshell.internal:9200/reports -- node /lab/app/agent/server.mjs
@@ -264,9 +275,9 @@ for f in FAKE_API_KEY.txt faq.txt; do
 done
 ROUTE_BIND="\$(openshell sandbox exec -n asl-agent -- getent hosts host.openshell.internal | cut -d' ' -f1)"
 docker rm -f asl-route >/dev/null 2>&1 || true
-docker run -d --name asl-route --restart unless-stopped --network host -e ROUTE_BIND="\$ROUTE_BIND" "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:c2fbd7ec5cba1054ab74e36e2f53b165d953a4f401cb0478bbc1b95a5b42cc4e}" node route/relay.mjs
+docker run -d --name asl-route --restart unless-stopped --network host -e ROUTE_BIND="\$ROUTE_BIND" "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:a105ed7944841854576b0239a5ad54f6ed91c7fc3af564b6d5ff5144c3f75ba9}" node route/relay.mjs
 openshell forward start 9003 asl-agent &
-openshell logs asl-agent --source sandbox --follow | docker run -i --rm -v "$WS/logs:/lab/logs" "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:c2fbd7ec5cba1054ab74e36e2f53b165d953a4f401cb0478bbc1b95a5b42cc4e}" node denial-collector/collector.mjs &
+openshell logs asl-agent --source sandbox --follow | docker run -i --rm -v "$WS/logs:/lab/logs" "${LAB_IMAGE:-ghcr.io/ashishsalve/agent-safety-lab:0.1.0@sha256:a105ed7944841854576b0239a5ad54f6ed91c7fc3af564b6d5ff5144c3f75ba9}" node denial-collector/collector.mjs &
 EOF
 # Applies lab UI edits; asl-apply.path runs it when a .changed-* marker appears.
 cat > "$WS/bin/asl-apply" <<EOF
@@ -297,8 +308,9 @@ sudo find "$WS/config" -type d -exec chmod g+s {} +
 sudo tee /etc/systemd/system/asl.service >/dev/null <<EOF
 [Unit]
 Description=Agent Safety Lab
-After=docker.service network-online.target
+After=docker.service network-online.target user@$UID_NUM.service
 Requires=docker.service
+Wants=user@$UID_NUM.service
 [Service]
 Type=forking
 User=$(id -un)
@@ -322,11 +334,23 @@ PathExistsGlob=$WS/config/.changed-*
 WantedBy=multi-user.target
 EOF
 sudo systemctl daemon-reload
-sudo systemctl enable --now asl.service asl-apply.path
+sudo systemctl enable asl.service asl-apply.path
+sudo systemctl start asl-apply.path
+svc=0
+if ! sudo systemctl start asl.service; then
+  svc=1
+  echo "asl.service failed; last journal lines:" >&2
+  sudo journalctl -u asl.service -n 40 --no-pager -o cat >&2 || true
+fi
 
+ok=0
 for _ in $(seq 1 180); do
-  curl -fsS --max-time 5 http://localhost:8080/healthz >/dev/null && { echo "Agent Safety Lab is up on port 8080; models load in the background."; exit 0; }
+  curl -fsS --max-time 5 http://localhost:8080/healthz >/dev/null 2>&1 && { ok=1; break; }
   sleep 10
 done
-echo "Lab UI did not answer on port 8080 within 30 minutes" >&2
-exit 1
+echo "Lab status (models keep loading in the background):"
+curl -fsS --max-time 5 http://localhost:8080/api/status || true
+echo
+[ "$ok" -eq 1 ] || { echo "Lab UI did not answer on port 8080 within 30 minutes" >&2; exit 1; }
+[ "$svc" -eq 0 ] || { echo "Lab UI is up but asl.service failed; see journalctl -u asl.service" >&2; exit 1; }
+echo "Agent Safety Lab is up on port 8080."
