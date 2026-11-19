@@ -48,9 +48,9 @@ cat > "$APP/nginx.conf" <<EOF
 events {}
 http {
 map \$http_upgrade \$conn { default upgrade; '' close; }
-map \$http_origin \$po { default ''; "~^https://[a-z0-9-]+\.(gobrev\.dev|brevlab\.com)\$" http://127.0.0.1:$UP; }
-map "\$http_origin|\$request_method" \$deny { default 1; "|GET" 0; "~^https://[a-z0-9-]+\.(gobrev\.dev|brevlab\.com)\|" 0; }
-server { listen 127.0.0.1:18780; location / { $LOC } }
+map "\$http_origin|\$host|\$http_x_forwarded_host" \$po { default ''; "~^https://([a-z0-9.-]+)\|(\1\|[^|]*|[^|]*\|\1)\$" http://127.0.0.1:$UP; }
+map "\$po|\$http_origin|\$request_method" \$deny { default 1; "||GET" 0; "~^h" 0; }
+server { listen 18780; location / { $LOC } }
 }
 EOF
 # nginx 1.30.7-alpine, index digest 2026-11-18
@@ -335,7 +335,7 @@ sg docker -c "'$APP_DIR/recover.sh' --check" || { echo "Agent sandbox readiness 
 echo "NemoClaw sandbox ready"
 # <<< wave3:nemoclaw-bootstrap.sh
 
-sed -i -e 's/lo 8080 0 ||/lo 8080 0 \&\& lo 18780 1 ||/' -e '2a [ "$(id -gn)" = docker ] || exec sg docker -c "$0 $*"' -e '/|| nemoclaw/i "$APP_DIR/post-recover.sh" pre' "$APP/recover.sh"
-[ "$(grep -c 'lo 18780 1 ||\|exec sg docker\|sh" pre$' "$APP/recover.sh")" = 3 ]||{ echo "Patch failed" >&2;exit 1;}
+sed -i -e 's/lo 8080 0 ||/lo 8080 0 \&\& [ "$(ss -Hltn sport = :18780)" ] ||/' -e '2a [ "$(id -gn)" = docker ] || exec sg docker -c "$0 $*"' -e '/|| nemoclaw/i "$APP_DIR/post-recover.sh" pre' "$APP/recover.sh"
+[ "$(grep -c ':18780)" ] ||\|exec sg docker\|sh" pre$' "$APP/recover.sh")" = 3 ]||{ echo "Patch failed" >&2;exit 1;}
 "$APP/recover.sh" --check||{ echo "Agent not ready" >&2;exit 1;}
 echo "$DONE"

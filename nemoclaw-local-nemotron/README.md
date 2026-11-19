@@ -65,7 +65,7 @@ You can check each of these on the instance:
 2. `sg docker -c 'nemoclaw private-agent status'` shows the custom local endpoint and the model `nemotron-3.5-lightning`. Run `nemoclaw` commands through `sg docker -c '...'`: the agent runs under the `docker` group, and a plain `nemoclaw private-agent connect` can fail with "cannot attribute".
 3. `sudo ss -ltnp` shows vLLM listening on 127.0.0.1:8000 only.
 4. `openshell policy get private-agent` shows the active network policy.
-5. `NEMOCLAW_DISABLE_TELEMETRY=1` and `OPENSHELL_TELEMETRY_ENABLED=false` are set in `~/workspace/private-agent/recover.sh`, which starts the agent after every boot.
+5. `NEMOCLAW_DISABLE_TELEMETRY=1` and `OPENSHELL_TELEMETRY_ENABLED=false` are set in `~/workspace/private-agent/recover.sh`, which the private-agent-recover service runs to start the agent.
 
 Only port 18780 is reachable, through the Secure Link. Do not open port 8080 (the OpenShell gateway) or port 8000.
 
@@ -83,11 +83,11 @@ The API is OpenAI-compatible; the model name is `nemotron-3.5-lightning`. Set `m
 - `~/workspace/private-agent`: launch settings, the access URL file, Node.js and the recovery scripts.
 - `~/workspace/nemotron-vllm/huggingface`: the model cache.
 
-Both survive Stop and are removed by Delete. After Start, the `private-agent-recover` systemd service waits for the model, restarts NemoClaw's local inference proxy, recovers the sandbox, re-applies the policy and rewrites `AGENT_URL.txt`. The access token may change, so read the file again.
+Both survive Stop and are removed by Delete. After Start, the agent may not come back on its own. If the `agent` link shows an error, run `sudo systemctl restart private-agent-recover` in the Brev terminal; it waits up to 20 minutes for the model, restarts NemoClaw's local inference proxy, recovers the sandbox, re-applies the policy and rewrites `AGENT_URL.txt`. The access token may change, so read the file again.
 
 ## Stop and delete
 
-Stop pauses the instance; disk storage is still billed while stopped. Delete removes the instance and all its data.
+Stop pauses the instance; disk storage is still billed while stopped. Delete removes the instance and all its data. After Start, if the agent link shows an error, run `sudo systemctl restart private-agent-recover` (see Data and persistence).
 
 ## Troubleshooting
 
