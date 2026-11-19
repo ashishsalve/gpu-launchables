@@ -1,5 +1,7 @@
 # Nemotron Omni Browser Agent
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3MK6719j1bLnhgxNjnPlFO2kuJS)
+
 Watch NVIDIA Nemotron 3 Nano Omni drive a real Chromium browser, live, on your
 own GPU. The model runs on this instance with vLLM. It controls a headed
 Chromium through Playwright MCP, and the browser runs inside an NVIDIA
@@ -7,6 +9,8 @@ OpenShell sandbox whose egress allowlist decides which sites it may reach.
 You watch every step in a view-only live desktop next to the chat.
 
 1x L40S 48GB, >= 44 GB VRAM | 200 GiB disk | ~$2.23/hr | Stop to pause, Delete when done
+
+Launchable ID: env-3MK6719j1bLnhgxNjnPlFO2kuJS
 
 Minimum GPU: one 48 GB GPU (NVIDIA L40S class). You can pick other compute on
 the deploy page.
