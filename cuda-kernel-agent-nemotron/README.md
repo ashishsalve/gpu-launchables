@@ -1,5 +1,9 @@
 # CUDA Kernel Engineer Agent on Nemotron
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3MJyaXnnzyUwmC2pfHx1ibrlg6C)
+
+Launchable ID: env-3MJyaXnnzyUwmC2pfHx1ibrlg6C
+
 Speed up slow PyTorch, NumPy or CUDA code with a third-party open-source coding agent (LangChain Deep Agents Code) running in an NVIDIA OpenShell sandbox. The agent writes CUDA, Triton or cuTile kernels, checks them with compute-sanitizer, profiles them with Nsight Compute and Nsight Systems, and benchmarks them on this GPU. The model, NVIDIA Nemotron 3.5 Lightning, is served by vLLM on the same GPU; no external model API is used.
 
 1x L40S 48GB, >= 48 GB VRAM | 250 GiB disk | ~$2.23/hr (console 2026-11-15) | Stop to pause, Delete when done
