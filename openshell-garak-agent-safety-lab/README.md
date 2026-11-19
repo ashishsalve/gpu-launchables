@@ -55,7 +55,7 @@ Everything lives in `/home/ubuntu/workspace/asl`: model cache, configs, runs and
 
 ## Stop and delete
 
-Stop pauses the instance. Disk storage is billed while stopped. Delete removes the instance and all data.
+Stop pauses the instance. Disk storage is billed while stopped. Delete removes the instance and all data. After Start, if the lab link shows an error, run `sudo systemctl restart asl.service` in the Brev terminal and wait up to 30 minutes for the readiness lights.
 
 ## Troubleshooting
 
