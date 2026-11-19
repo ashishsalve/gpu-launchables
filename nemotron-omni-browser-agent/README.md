@@ -1,12 +1,16 @@
 # Nemotron Omni Browser Agent
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3MK6719j1bLnhgxNjnPlFO2kuJS)
+
 Watch NVIDIA Nemotron 3 Nano Omni drive a real Chromium browser, live, on your
 own GPU. The model runs on this instance with vLLM. It controls a headed
 Chromium through Playwright MCP, and the browser runs inside an NVIDIA
 OpenShell sandbox whose egress allowlist decides which sites it may reach.
 You watch every step in a view-only live desktop next to the chat.
 
-1x L40S 48GB, >= 44 GB VRAM | 200 GiB disk | ~$2.23/hr | Stop to pause, Delete when done
+1x L40S 48GB, >= 44 GB VRAM | 200 GiB disk | ~$2.26/hr (console 2026-11-19) | ~25 min to ready | Stop to pause, Delete when done
+
+Launchable ID: env-3MK6719j1bLnhgxNjnPlFO2kuJS
 
 Minimum GPU: one 48 GB GPU (NVIDIA L40S class). You can pick other compute on
 the deploy page.
@@ -73,13 +77,14 @@ curl http://localhost:8000/v1/models
 
 Everything lives under `/home/ubuntu/workspace/browser-agent` (settings, step
 screenshots, the sandbox log) and `/home/ubuntu/workspace/huggingface` (model
-cache). These survive Stop and are removed by Delete.
+cache). Settings, screenshots and the sandbox log survive Stop and are removed
+by Delete. The model cache lives on the instance's local NVMe when the root
+disk is small and is downloaded again after a Stop; when the root disk has room
+it stays.
 
 ## Stop and delete
 
-- Stop pauses the instance; storage is still billed while stopped. After Start
-  the services come back by themselves (no settings to re-enter); the model
-  takes a few minutes to load again.
+- Stop pauses the instance; storage is still billed while stopped. After Start, browser-agent.service starts the services again; the model loads again, or downloads again if it was on local NVMe. If the chat page is not back about 20 minutes after a start, run `sudo systemctl restart browser-agent.service`.
 - Delete removes the instance and all data.
 
 ## Troubleshooting
@@ -109,7 +114,7 @@ it public: anyone who can open it can run browser tasks on your instance.
 
 Current versions: Nemotron 3 Nano Omni 30B-A3B Reasoning FP8 (revision 0acd4b1c237eab45d3977b1b46631919e9a75774), vLLM v0.33.0, NVIDIA OpenShell v0.1.9, Playwright MCP 0.0.85, noVNC 1.6.0, websockify 0.13.0, nginx 1.31.9
 
-Last smoke: not yet run
+Last smoke: 2026-11-19, fresh deploy on AWS g6e.xlarge (1x L40S): ready in about 24 minutes.
 
 ## Credits and licences
 
