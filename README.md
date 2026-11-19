@@ -29,3 +29,4 @@ These environments are for developers, researchers and teams who want a working 
 | cuOpt Planning Agent on Nemotron | [cuopt-planning-agent](cuopt-planning-agent/) |
 | Hermes Agent on Nemotron 3.5 Bolt | [hermes-agent-nemotron-bolt](hermes-agent-nemotron-bolt/) |
 | CUDA Kernel Engineer Agent on Nemotron | [cuda-kernel-agent-nemotron](cuda-kernel-agent-nemotron/) |
+| Nemotron Science Agent (GROMACS, RDKit) | [nemotron-science-agent](nemotron-science-agent/) |

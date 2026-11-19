@@ -1,0 +1,213 @@
+# Nemotron Science Agent: Hermes Agent + vLLM + GROMACS + RDKit on one GPU
+# (Docker Compose).
+# Launch parameters:
+#   MODEL         - model served by vLLM. super-vl (default) is
+#                   nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4.
+#   MAX_MODEL_LEN - context window in tokens: 65536 (default) or 32768.
+#   HF_TOKEN      - optional Hugging Face read token, no default. Used only to
+#                   download the model and the benchmark file.
+# Parameters are read by the first `docker compose up` and kept in each
+# container's configuration, so stop/start needs no re-entry. HF_TOKEN reaches
+# only the vllm and init service environments, never a command, image name or
+# label.
+#
+# Pinned images:
+#   vllm/vllm-openai:v0.32.0 (+ index digest) - vLLM release used for
+#     Nemotron 3.5 Super VL NVFP4.
+#   ghcr.io/open-webui/open-webui:v0.13.3 (+ index digest) - Open WebUI
+#     release v0.13.3.
+#   ghcr.io/ashishsalve/science-tools:0.1.0 (+ digest) - GROMACS 2026.4 (CUDA build),
+#     RDKit and the science MCP server.
+#   ghcr.io/ashishsalve/hermes-science (+ digest) - Hermes Agent v0.23.2 with
+#     this project's configuration.
+#
+# Networks: "back" is internal (no internet). The science tools and the agent
+# live only on "back". vLLM and the one-shot init service use "default" to
+# download the model and the benchmark file. Open WebUI is on both so the
+# browser can reach it through the Secure Link.
+#
+# Persistence: everything lives under /home/ubuntu/workspace/science-agent on
+# the host, which survives stop and is destroyed on delete.
+
+name: nemotron-science-agent
+
+networks:
+  default: {}
+  back:
+    internal: true
+
+services:
+  # One-shot, idempotent: creates the folders, the agent API key file (mode
+  # 0600) and downloads the benchmark file at a fixed revision with a checksum.
+  # Prints no secret values. Other services wait for its outputs themselves.
+  init:
+    image: ghcr.io/ashishsalve/science-tools:0.1.0@sha256:05d340c90d9947738a34d90d69dd3e23370736fd2e5dfebd13591b310414e22f
+    restart: "no"
+    user: "0:0"
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"
+    entrypoint: ["/bin/bash", "/opt/science/init.sh"]
+    volumes:
+      - /home/ubuntu/workspace/science-agent:/sa
+    networks:
+      - default
+
+  vllm:
+    image: vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34
+    restart: unless-stopped
+    ipc: host
+    environment:
+      MODEL: "${MODEL:-super-vl}"
+      MAX_MODEL_LEN: "${MAX_MODEL_LEN:-65536}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HOME: "/root/.cache/huggingface"
+      # Start script: maps MODEL to a pinned model revision and flags, then
+      # execs `vllm serve`. It prints no environment values.
+      VLLM_LAUNCH_SCRIPT: |
+        set -euo pipefail
+        case "$$MODEL" in
+          super-vl)
+            set -- nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 \
+              --revision ae1368329b1fc76b71534c5d04b87b35d9cc6e15 \
+              --trust-remote-code \
+              --gpu-memory-utilization 0.86 --max-num-seqs 4 \
+              --max-num-batched-tokens 8192 --block-size 64 --prefix-match-unit 64 \
+              --mamba-backend flashinfer --mamba-ssm-cache-dtype float16 \
+              --enable-mamba-cache-stochastic-rounding --mamba-cache-philox-rounds 5 \
+              --enable-mamba-shared-prefix-checkpoint --mamba-cache-mode align \
+              --limit-mm-per-prompt '{"image": 2, "video": 0}' \
+              --enable-auto-tool-choice --tool-call-parser qwen3_coder \
+              --reasoning-parser nemotron_v3
+            ;;
+          *)
+            echo "MODEL is not one of the supported choices" >&2
+            exit 1
+            ;;
+        esac
+        case "$$MAX_MODEL_LEN" in
+          32768|65536) ;;
+          *) echo "MAX_MODEL_LEN is not one of the supported choices" >&2; exit 1 ;;
+        esac
+        exec vllm serve "$$@" --served-model-name nemotron-3.5-super-vl \
+          --host 0.0.0.0 --port 8000 --max-model-len "$$MAX_MODEL_LEN"
+    volumes:
+      - /home/ubuntu/workspace/science-agent/huggingface:/root/.cache/huggingface
+    entrypoint: ['/bin/bash', '-c', 'eval "$$VLLM_LAUNCH_SCRIPT"']
+    ports:
+      # Instance loopback only: reach the API with `brev port-forward`.
+      - "127.0.0.1:8000:8000"
+    networks:
+      - default
+      - back
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 2700s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Fixed science tools over MCP (no shell tool). No internet, read-only root
+  # file system, all capabilities dropped, unprivileged user.
+  science-tools:
+    image: ghcr.io/ashishsalve/science-tools:0.1.0@sha256:05d340c90d9947738a34d90d69dd3e23370736fd2e5dfebd13591b310414e22f
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 24g
+    environment:
+      VLLM_BASE_URL: "http://vllm:8000/v1"
+      SERVED_MODEL: "nemotron-3.5-super-vl"
+      # Every MCP request must carry this token (created by init, mode 0600).
+      MCP_TOKEN_FILE: "/keys/science_mcp_token"
+    volumes:
+      - /home/ubuntu/workspace/science-agent/keys:/keys:ro
+      - /home/ubuntu/workspace/science-agent/work:/work
+      - /home/ubuntu/workspace/science-agent/data:/data:ro
+      - /home/ubuntu/workspace/science-agent/evals:/evals
+    networks:
+      - back
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9100/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Hermes Agent: OpenAI-compatible agent API on 8642, reachable only on the
+  # internal network. Its built-in tools are all off; it uses only the science
+  # MCP tools above (with their access token) and the local model.
+  hermes:
+    image: ghcr.io/ashishsalve/hermes-science:dev-sha-b634b44@sha256:083248bd21b4bef88fc8aedccc26d2f6d261d627432339836a927efde2c9480a
+    restart: unless-stopped
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      HERMES_HOME: "/hermes"
+      API_SERVER_HOST: "0.0.0.0"
+      API_SERVER_PORT: "8642"
+    volumes:
+      - /home/ubuntu/workspace/science-agent/hermes:/hermes
+      - /home/ubuntu/workspace/science-agent/keys:/keys:ro
+    networks:
+      - back
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8642/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.13.3@sha256:46b59158e6558eeb980bc828e0f1b30238ad24d82ed84d5e5eda1dab2a082f14
+    restart: unless-stopped
+    depends_on:
+      hermes:
+        condition: service_started
+    environment:
+      WEBUI_AUTH: "true"
+      ENABLE_OLLAMA_API: "false"
+      OPENAI_API_BASE_URL: "http://hermes:8642/v1"
+      TOOL_SERVER_CONNECTIONS: "[]"
+    # Waits for the agent API key file, reads it into the connection key
+    # without printing it, then runs the image's own start script
+    # (WORKDIR /app/backend, CMD bash start.sh in the v0.13.3 Dockerfile).
+    entrypoint: ["/bin/bash", "-c", "until [ -s /keys/hermes_api_key ]; do sleep 2; done; OPENAI_API_KEY=\"$$(cat /keys/hermes_api_key)\"; export OPENAI_API_KEY; cd /app/backend; exec bash start.sh"]
+    volumes:
+      - /home/ubuntu/workspace/science-agent/open-webui:/app/backend/data
+      - /home/ubuntu/workspace/science-agent/keys:/keys:ro
+    ports:
+      # Served to deployers only through the Brev Secure Link "science-agent".
+      - "8080:8080"
+    networks:
+      - default
+      - back
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
