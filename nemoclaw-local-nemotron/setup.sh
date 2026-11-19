@@ -1,7 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 umask 022
-
 AGENT_HARNESS="${AGENT_HARNESS:-openclaw}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-65536}"
 APP=/home/ubuntu/workspace/private-agent
@@ -10,8 +9,6 @@ command -v nvidia-smi >/dev/null && command -v docker >/dev/null || { echo "Need
 mkdir -p "$APP" "$HOME/.local/bin"
 chmod 755 "$HOME" "$HOME/.local" "$HOME/.local/bin" "$APP"
 (umask 077;printf 'AGENT_HARNESS=%s\nMAX_MODEL_LEN=%s\n' "$AGENT_HARNESS" "$MAX_MODEL_LEN" >"$APP/params.env";touch "$APP/vllm.env")
-chmod 600 "$APP/params.env" "$APP/vllm.env"
-
 cat > "$APP/post-recover.sh" <<'EOF'
 #!/bin/bash
 set -euo pipefail
@@ -26,14 +23,14 @@ fi
 cd "${0%/*}"
 . .state/recover.env
 . ./params.env
-export PATH="$BIN_PATH:$PATH"
-# brew-balanced: POST
+PATH=$BIN_PATH:$PATH
+# brew-balanced
 p=$(openshell policy get "$SANDBOX_NAME" --full)
-case $p in *brew-balanced*) openshell policy update "$SANDBOX_NAME" --remove-rule brew-balanced --wait >/dev/null ;; esac
+[[ $p != *brew-balanced* ]]||openshell policy update "$SANDBOX_NAME" --remove-rule brew-balanced --wait >/dev/null
 for ep in github.com codeload.github.com; do
 openshell policy update "$SANDBOX_NAME" --rule-name readonly-github --add-endpoint "$ep:443:read-only:rest:enforce" --binary /usr/bin/git --binary /usr/bin/curl --wait >/dev/null
 done
-[ "$AGENT_HARNESS" = langchain-deepagents-code ] || { umask 077;U=$APP_DIR/AGENT_URL.txt;nemoclaw "$SANDBOX_NAME" dashboard-url --quiet >$U.new;mv $U.new $U;}
+[[ $AGENT_HARNESS = l* ]]||{ umask 077;U=$APP_DIR/AGENT_URL.txt;nemoclaw "$SANDBOX_NAME" dashboard-url --quiet >$U.new;mv $U.new $U;}
 EOF
 chmod 755 "$APP/post-recover.sh"
 "$APP/post-recover.sh" pre
@@ -53,17 +50,14 @@ map "\$po|\$http_origin|\$request_method" \$deny { default 1; "||GET" 0; "~^h" 0
 server { listen 18780; location / { $LOC } }
 }
 EOF
-# nginx 1.30.7-alpine, index digest 2026-11-18
-sudo docker container inspect agent-proxy >/dev/null 2>&1 ||
-sudo docker run -d --name agent-proxy --restart unless-stopped --network host -v "$APP/nginx.conf:/etc/nginx/nginx.conf:ro" \
- nginx:1.30.7-alpine@sha256:b24de00298eb7fb23839442d46c780991be7bc7ddb081b6c0876ac777012e352 >/dev/null
-
+# index digest 2026-11-18
+sudo docker container inspect agent-proxy &>/dev/null||
+sudo docker run -d --name agent-proxy --restart unless-stopped --network host -v "$APP/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:1.30.7-alpine@sha256:b24de00298eb7fb23839442d46c780991be7bc7ddb081b6c0876ac777012e352 >/dev/null
 NAME=nemotron-vllm
 SERVED_NAME=nemotron-3.5-lightning
 GPU_UTIL=0.90
 MAX_NUM_SEQS=8
 ENV_FILE=$APP/vllm.env
-
 # >>> wave3:vllm-nemotron.sh@5cff0907c4ad
 # Nemotron 3.5 Lightning 30B-A3B NVFP4 on vLLM, VM form.
 # Paste between the wave3 markers of a #!/bin/bash setup script that already
@@ -169,7 +163,6 @@ case "$vllm_models" in
     ;;
 esac
 # <<< wave3:vllm-nemotron.sh
-
 # >>> wave3:openshell-install.sh@630e898da6a4
 # OpenShell v0.0.116 from the release .deb, verified by sha256 before install.
 # Paste between the wave3 markers of a #!/bin/bash setup script that runs
@@ -194,7 +187,6 @@ if ! command -v openshell >/dev/null 2>&1 || ! openshell --version 2>/dev/null |
 fi
 openshell --version
 # <<< wave3:openshell-install.sh
-
 # NemoClaw v0.0.144
 NEMOCLAW_SHA=82e1ad7474ec7175c5b860b2bfa9d7940bc6e75f
 NEMOCLAW_INSTALL_SHA256=662dfc66b84c4507a6c1a3cc5429ab9ace6034c26a44ed84d446451e32db57d4
@@ -208,8 +200,7 @@ ENDPOINT_URL=http://localhost:8000/v1
 SERVED_MODEL=$SERVED_NAME
 POLICY_TIER=balanced
 export NEMOCLAW_WEB_SEARCH_PROVIDER=none NEMOCLAW_REASONING_EFFORT=low
-[ "$AGENT_HARNESS" != hermes ] || export NEMOCLAW_HERMES_DASHBOARD=1
-
+[ $AGENT_HARNESS != hermes ]||export NEMOCLAW_HERMES_DASHBOARD=1
 # >>> wave3:nemoclaw-bootstrap.sh@fe296a465f7c
 # NemoClaw + OpenShell bootstrap: Node runtime, pinned installer, onboarding,
 # a boot-time recovery unit and readiness checks. Idempotent: each step
@@ -334,8 +325,8 @@ sg docker -c "'$APP_DIR/recover.sh'" || { echo "Agent sandbox not ready" >&2; ex
 sg docker -c "'$APP_DIR/recover.sh' --check" || { echo "Agent sandbox readiness check failed" >&2; exit 1; }
 echo "NemoClaw sandbox ready"
 # <<< wave3:nemoclaw-bootstrap.sh
-
-sed -i -e 's/lo 8080 0 ||/lo 8080 0 \&\& [ "$(ss -Hltn sport = :18780)" ] ||/' -e '2a [ "$(id -gn)" = docker ] || exec sg docker -c "$0 $*"' -e '/|| nemoclaw/i "$APP_DIR/post-recover.sh" pre' "$APP/recover.sh"
-[ "$(grep -c ':18780)" ] ||\|exec sg docker\|sh" pre$' "$APP/recover.sh")" = 3 ]||{ echo "Patch failed" >&2;exit 1;}
+sudo sed -i s/^Requires/Wants/ /etc/systemd/system/$SANDBOX_NAME-recover.service
+sed -i -e 's/lo 8080 0/& \&\& [ "$(ss -Hltn sport = :18780)" ]/' -e '2a [ $(id -gn) = docker ]||{ sudo systemctl start --job-mode=ignore-dependencies containerd docker.socket docker||:;exec sg docker -c "$0 $*";}' -e '/|| nemoclaw/i "$APP_DIR/post-recover.sh" pre' "$APP/recover.sh"
+[ "$(grep -c ':18780)\|exec sg\|sh" pre$' "$APP/recover.sh")" = 3 ]||{ echo "Patch failed" >&2;exit 1;}
 "$APP/recover.sh" --check||{ echo "Agent not ready" >&2;exit 1;}
 echo "$DONE"
