@@ -23,8 +23,8 @@ HF_TOKEN="${HF_TOKEN:-}"
 
 MODEL_REVISION="bee7596271d1495f6992ae224aefde4410e816b8"
 # Sandbox image built from this Launchable's image directory, pinned by digest.
-SANDBOX_DIGEST="4ccca1b8441ed6ae248004d1967ea36c38f46f22d83fb1465f8afe530ffaa9ec"
-SANDBOX_REF="ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-d6e1889@sha256:$SANDBOX_DIGEST"
+SANDBOX_DIGEST="49e43a9670641d2f68502662971e8ebfc53919833df213cd27fdff68eb69f48e"
+SANDBOX_REF="ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-e2307ba@sha256:$SANDBOX_DIGEST"
 NEMOCLAW_SHA="82e1ad7474ec7175c5b860b2bfa9d7940bc6e75f"
 NEMOCLAW_INSTALL_SHA256="662dfc66b84c4507a6c1a3cc5429ab9ace6034c26a44ed84d446451e32db57d4"
 NODE_VERSION="22.23.5"
@@ -130,11 +130,11 @@ if ! sudo docker inspect model-proxy >/dev/null 2>&1; then
 fi
 
 # Sandbox image at a fixed digest; host scripts are copied out of it.
-[ "$SANDBOX_REF" = "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-d6e1889@sha256:$SANDBOX_DIGEST" ] || { echo "Sandbox image reference mismatch" >&2; exit 1; }
-sudo docker pull "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-d6e1889@sha256:4ccca1b8441ed6ae248004d1967ea36c38f46f22d83fb1465f8afe530ffaa9ec"
+[ "$SANDBOX_REF" = "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-e2307ba@sha256:$SANDBOX_DIGEST" ] || { echo "Sandbox image reference mismatch" >&2; exit 1; }
+sudo docker pull "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-e2307ba@sha256:49e43a9670641d2f68502662971e8ebfc53919833df213cd27fdff68eb69f48e"
 GOT="$(sudo docker image inspect --format '{{join .RepoDigests " "}}' "$SANDBOX_REF")"
 case " $GOT " in *"@sha256:$SANDBOX_DIGEST "*) ;; *) echo "Sandbox image digest does not match the pinned digest" >&2; exit 1 ;; esac
-CID="$(sudo docker create "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-d6e1889@sha256:4ccca1b8441ed6ae248004d1967ea36c38f46f22d83fb1465f8afe530ffaa9ec")"
+CID="$(sudo docker create "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-e2307ba@sha256:49e43a9670641d2f68502662971e8ebfc53919833df213cd27fdff68eb69f48e")"
 sudo docker cp "$CID:/opt/kernel-lab/host/." "$LAB/host/"
 sudo docker rm "$CID" >/dev/null
 sudo chown -R "$ME:$ME" "$LAB"
