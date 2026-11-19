@@ -93,6 +93,7 @@ it stays.
 - Service state: `systemctl status browser-agent.service` and
   `systemctl --user status 'browser-agent-*'`
 - Restart everything: `sudo systemctl restart browser-agent.service`
+- If Start reports a failure, run Start again.
 
 More in [docs/troubleshooting.md](docs/troubleshooting.md).
 
