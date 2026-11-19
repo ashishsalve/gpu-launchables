@@ -2,9 +2,15 @@
 
 Turn PDFs and scans into cited answers and JSON on your own GPU. [NVIDIA Nemotron Parse](https://huggingface.co/nvidia/NVIDIA-Nemotron-Parse-2.0) reads each page of a document of up to 200 pages and maps its layout into text, tables and titles with bounding boxes. [NVIDIA Nemotron Embed](https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16) indexes those blocks for search. [NVIDIA Nemotron 3 Nano Omni](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4) answers questions and fills JSON fields, citing the page and block behind every claim. All three models are served by [vLLM](https://github.com/vllm-project/vllm) on this GPU; no document leaves the instance.
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3MKGRFFpCaHD0VuHHnt6q5IbB65)
+
+Launchable ID: env-3MKGRFFpCaHD0VuHHnt6q5IbB65
+
+1x L40S 48GB, >= 48 GB VRAM | 200 GiB disk | ~$2.26/hr (console 2026-11-19) | ~30 min to ready | Stop to pause, Delete when done
+
 Current versions: vLLM v0.33.0 (image pinned by digest), NVIDIA-Nemotron-Parse-2.0 at revision 4e021c03edc92e715d5d788921a927d0cbb4b4d1, Nemotron-3.5-Embed-1B-BF16 at revision e24ca1e346bcc53572bd7bdc02b3e8ebf66c197c, Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4 at revision 16993199e436da4ba75ddc410855f87e0d996ee6, Python 3.12.12, pypdfium2 5.15.2, Pillow 13.0.0
 
-Last smoke: none yet
+Last smoke: 2026-11-19 (fresh deploy on 1x L40S).
 
 ## What you get
 
@@ -13,7 +19,7 @@ One web app behind the `open-doc-agent` link:
 - **Documents** - three sample buttons and an upload box for PDF, PNG or JPEG files up to 200 MB. A PDF with more than 200 pages is refused with a message asking you to split it.
 - **Pages** - every page as a thumbnail with the layout blocks Nemotron Parse found drawn on it.
 - **Ask** - a question in plain words returns an answer split into claims. Each claim carries a chip such as `p.3 Table`: green when the quote it cites was found in that block, amber with the reason when it was not. Click a chip to highlight the block on its page.
-- **Extract** - pick a form preset and get JSON in which every field has a value, page, box and a verified flag. A field is marked verified only when its value is copied word for word from the cited block.
+- **Extract** - pick a form preset and get JSON in which every field has a value, page, box and a verified flag. A field is marked verified only when its value is copied word for word from the cited block. Verified (green) means the cited quote appears on the cited page of the source; it does not prove that the extracted value belongs in that field, so check each green field against the form.
 
 ## Sample documents
 

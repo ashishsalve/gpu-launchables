@@ -1,13 +1,17 @@
 # NemoClaw Private Agent on Local Nemotron
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3MK68pYUXCux61sliWiZiwndcQ0)
+
+Launchable ID: env-3MK68pYUXCux61sliWiZiwndcQ0
+
 Run a private agent with [NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw) on one GPU. The agent runs inside an [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandbox and uses one of three open-source agent harnesses: OpenClaw, Hermes Agent or LangChain Deep Agents Code. Its model, NVIDIA Nemotron 3.5 Lightning, is served by [vLLM](https://github.com/vllm-project/vllm) on the same GPU, so no external model API or API key is needed.
 
-1x L40S 48GB, >= 46 GB VRAM | 200 GiB disk | ~$2.23/hr (console 2026-11-18) | ~30 min to ready | Stop to pause, Delete when done
+1x L40S 48GB, >= 46 GB VRAM | 200 GiB disk | ~$2.26/hr (console 2026-11-19) | ~35 min to ready | Stop to pause, Delete when done
 
 Minimum GPU: one 48 GB GPU (L40S class). You can pick other compute on the deploy page; a 96 GB GPU allows MAX_MODEL_LEN 131072.
 
 Current versions: NemoClaw v0.0.144 (commit 82e1ad7), OpenShell v0.0.116, vLLM v0.27.1, Nemotron 3.5 Lightning 30B-A3B NVFP4 (revision bee7596), Node.js v22.23.5, nginx 1.30.7-alpine.
-Last smoke: not yet run.
+Last smoke: 2026-11-19, fresh deploy on 1x L40S (agent ready about 34 minutes after deploy).
 
 ## What you get
 
@@ -61,7 +65,7 @@ You can check each of these on the instance:
 2. `sg docker -c 'nemoclaw private-agent status'` shows the custom local endpoint and the model `nemotron-3.5-lightning`. Run `nemoclaw` commands through `sg docker -c '...'`: the agent runs under the `docker` group, and a plain `nemoclaw private-agent connect` can fail with "cannot attribute".
 3. `sudo ss -ltnp` shows vLLM listening on 127.0.0.1:8000 only.
 4. `openshell policy get private-agent` shows the active network policy.
-5. `NEMOCLAW_DISABLE_TELEMETRY=1` and `OPENSHELL_TELEMETRY_ENABLED=false` are set in `~/workspace/private-agent/recover.sh`, which starts the agent after every boot.
+5. `NEMOCLAW_DISABLE_TELEMETRY=1` and `OPENSHELL_TELEMETRY_ENABLED=false` are set in `~/workspace/private-agent/recover.sh`, which the private-agent-recover service runs to start the agent.
 
 Only port 18780 is reachable, through the Secure Link. Do not open port 8080 (the OpenShell gateway) or port 8000.
 
@@ -79,11 +83,11 @@ The API is OpenAI-compatible; the model name is `nemotron-3.5-lightning`. Set `m
 - `~/workspace/private-agent`: launch settings, the access URL file, Node.js and the recovery scripts.
 - `~/workspace/nemotron-vllm/huggingface`: the model cache.
 
-Both survive Stop and are removed by Delete. After Start, the `private-agent-recover` systemd service waits for the model, restarts NemoClaw's local inference proxy, recovers the sandbox, re-applies the policy and rewrites `AGENT_URL.txt`. The access token may change, so read the file again.
+Both survive Stop and are removed by Delete. After Start, the agent may not come back on its own. If the `agent` link shows an error, run `sudo systemctl restart private-agent-recover` in the Brev terminal; it waits up to 20 minutes for the model, restarts NemoClaw's local inference proxy, recovers the sandbox, re-applies the policy and rewrites `AGENT_URL.txt`. The access token may change, so read the file again.
 
 ## Stop and delete
 
-Stop pauses the instance; disk storage is still billed while stopped. Delete removes the instance and all its data.
+Stop pauses the instance; disk storage is still billed while stopped. Delete removes the instance and all its data. After Start, if the agent link shows an error, run `sudo systemctl restart private-agent-recover` (see Data and persistence).
 
 ## Troubleshooting
 

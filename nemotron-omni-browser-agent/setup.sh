@@ -13,8 +13,7 @@
 #   HF_TOKEN        - optional Hugging Face read token, no default. Stored only
 #                     in a mode 600 file and never printed.
 #
-# The script stops before installing anything while a pinned checksum or
-# image digest below is not a full sha256 value.
+# Unresolved pins below stop the script before it installs anything.
 set -euo pipefail
 
 MODEL="${MODEL:-nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8}"
@@ -81,8 +80,7 @@ APP="$WS/browser-agent"
 STATE="$APP/.state"
 UID_NUM="$(id -u)"
 GID_NUM="$(id -g)"
-# HF cache placement: model and download temp files on one filesystem. Root
-# under 80 GB free -> instance store (emptied by a stop) if over 80 GB free.
+# HF cache placement: root, or the instance store if root is short.
 gb_free() { df -P -BG "$1" 2>/dev/null | awk 'NR == 2 { sub(/G$/, "", $4); print $4 + 0 }'; }
 ROOT_FREE="$(gb_free "$HOME")"; ROOT_FREE="${ROOT_FREE:-0}"
 ALT=""; ALT_FREE=0
@@ -144,8 +142,7 @@ umask 022
 
 # OpenShell sandbox policy: read-only system, writable /tmp and /workspace,
 # outbound HTTPS only to the listed hosts, only for the bundled Chromium.
-# tls: skip passes TLS through (the browser rejects the gateway's own
-# certificate); the host allowlist still applies to every connection.
+# tls: skip passes TLS through; the host allowlist still applies.
 {
   echo "version: 1"
   echo "filesystem_policy:"
@@ -247,8 +244,13 @@ cat > "$APP/up.sh" <<EOF
 #!/bin/bash
 set -euo pipefail
 export XDG_RUNTIME_DIR=/run/user/$UID_NUM
-for _ in \$(seq 1 90); do
+for i in \$(seq 1 90); do
   if docker info >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then break; fi
+  # Docker can stay down after a stop/start (base-image ordering cycle).
+  if [ \$((i % 12)) = 6 ] && ! systemctl is-active -q docker; then
+    sudo systemctl reset-failed docker.socket docker.service || true
+    sudo systemctl start --job-mode=ignore-dependencies containerd.service docker.socket docker.service || true
+  fi
   sleep 10
 done
 docker info >/dev/null
@@ -264,7 +266,8 @@ exists() { docker inspect "\$1" >/dev/null 2>&1; }
 if [ -n "$HF_MOUNT" ]; then
   for _ in \$(seq 1 30); do mountpoint -q $HF_MOUNT && break; sleep 10; done
   mountpoint -q $HF_MOUNT || { echo "Model cache mount $HF_MOUNT is not mounted" >&2; exit 1; }
-  [ -d $HFC/tmp ] || sudo install -d -o $UID_NUM -g $GID_NUM $HFC $HFC/hub $HFC/tmp
+  # Store emptied by a stop: re-create; vLLM downloads again.
+  [ -d $HFC/tmp ] || { sudo install -d -o $UID_NUM -g $GID_NUM $HFC $HFC/hub $HFC/tmp; ! exists vllm || docker restart vllm; }
 fi
 if ! exists vllm; then
   docker run -d --gpus all --name vllm --restart unless-stopped --ipc host -p 127.0.0.1:8000:8000 -v $HFC:/root/.cache/huggingface -e HF_HOME=/root/.cache/huggingface -e HF_HUB_CACHE=/root/.cache/huggingface/hub -e TMPDIR=/root/.cache/huggingface/tmp --env-file $APP/hf.env vllm/vllm-openai:v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e $MODEL --revision $MODEL_REVISION --served-model-name nemotron-omni --host 0.0.0.0 --port 8000 --trust-remote-code --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser nemotron_v3 --max-model-len 65536 --max-num-seqs 4 --gpu-memory-utilization 0.90 --limit-mm-per-prompt '{"image": 2}'
@@ -292,13 +295,14 @@ if ! $OPENSHELL_BIN gateway select openshell >/dev/null 2>&1; then
 fi
 echo "gateway select ok"
 $OPENSHELL_BIN gateway info >/dev/null || { echo "No active OpenShell gateway" >&2; exit 1; }
-# Sandbox: create if absent; delete and re-create if in phase Error, at most
-# 3 times in a row (count in .state, reset by any other phase); start only
-# from a startable phase. Failures stop this script (the timer retries).
+# Sandbox: create if absent; re-create on phase Error (max 3 in a row).
 sb_create() { $OPENSHELL_BIN sandbox create --name browser-agent --from $SANDBOX_IMAGE --policy $APP/policy.yaml --detach -- /opt/agent/start-desktop.sh; }
 ERRS=$STATE/sandbox-errors
 sb_list="\$($OPENSHELL_BIN sandbox list)"
 phase="\$(awk '\$1 == "browser-agent" { print \$NF }' <<<"\$sb_list")"
+B=\$(cat /proc/sys/kernel/random/boot_id)
+[ -z "\$phase" ] || [ ! -s $STATE/boot ] || [ "\$B" = "\$(<$STATE/boot)" ] || { echo "New boot: re-creating sandbox browser-agent (its /tmp keeps a stale X lock)"; $OPENSHELL_BIN sandbox delete browser-agent; phase=; }
+echo "\$B" > $STATE/boot
 n=0
 if [ "\$phase" = Error ]; then
   n="\$(cat \$ERRS 2>/dev/null || true)"
@@ -362,9 +366,7 @@ Unit=browser-agent.service
 WantedBy=timers.target
 EOF
 sudo systemctl daemon-reload
-# User manager: start it, never restart it (a restart can race the old
-# cgroup teardown). Only if it runs without the docker group, stop it, wait
-# for its cgroup to go, then start it again.
+# User manager: start, never restart; stop first only if it lacks docker.
 UM="user@$UID_NUM.service"
 UM_CG="/sys/fs/cgroup/user.slice/user-$UID_NUM.slice/$UM"
 DOCKER_GID="$(getent group docker | cut -d: -f3)"
