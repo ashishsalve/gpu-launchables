@@ -23,8 +23,8 @@ HF_TOKEN="${HF_TOKEN:-}"
 
 MODEL_REVISION="bee7596271d1495f6992ae224aefde4410e816b8"
 # Sandbox image built from this Launchable's image directory, pinned by digest.
-SANDBOX_DIGEST="b3ad19ef22bdc3e4ee4dd2d1139a91e19d3b4c1c1d8606aa971363eb14da9477"
-SANDBOX_REF="ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:0.1.0@sha256:$SANDBOX_DIGEST"
+SANDBOX_DIGEST="2ce4157ab0de52f85827170c59cd1d3e45ef8877219d5f70a5d9828b0d74231c"
+SANDBOX_REF="ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-085942d@sha256:$SANDBOX_DIGEST"
 NEMOCLAW_SHA="82e1ad7474ec7175c5b860b2bfa9d7940bc6e75f"
 NEMOCLAW_INSTALL_SHA256="662dfc66b84c4507a6c1a3cc5429ab9ace6034c26a44ed84d446451e32db57d4"
 NODE_VERSION="22.23.5"
@@ -130,11 +130,11 @@ if ! sudo docker inspect model-proxy >/dev/null 2>&1; then
 fi
 
 # Sandbox image at a fixed digest; host scripts are copied out of it.
-[ "$SANDBOX_REF" = "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:0.1.0@sha256:$SANDBOX_DIGEST" ] || { echo "Sandbox image reference mismatch" >&2; exit 1; }
-sudo docker pull "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:0.1.0@sha256:b3ad19ef22bdc3e4ee4dd2d1139a91e19d3b4c1c1d8606aa971363eb14da9477"
+[ "$SANDBOX_REF" = "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-085942d@sha256:$SANDBOX_DIGEST" ] || { echo "Sandbox image reference mismatch" >&2; exit 1; }
+sudo docker pull "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-085942d@sha256:2ce4157ab0de52f85827170c59cd1d3e45ef8877219d5f70a5d9828b0d74231c"
 GOT="$(sudo docker image inspect --format '{{join .RepoDigests " "}}' "$SANDBOX_REF")"
 case " $GOT " in *"@sha256:$SANDBOX_DIGEST "*) ;; *) echo "Sandbox image digest does not match the pinned digest" >&2; exit 1 ;; esac
-CID="$(sudo docker create "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:0.1.0@sha256:b3ad19ef22bdc3e4ee4dd2d1139a91e19d3b4c1c1d8606aa971363eb14da9477")"
+CID="$(sudo docker create "ghcr.io/ashishsalve/cuda-kernel-agent-sandbox:dev-sha-085942d@sha256:2ce4157ab0de52f85827170c59cd1d3e45ef8877219d5f70a5d9828b0d74231c")"
 sudo docker cp "$CID:/opt/kernel-lab/host/." "$LAB/host/"
 sudo docker rm "$CID" >/dev/null
 sudo chown -R "$ME:$ME" "$LAB"
@@ -215,9 +215,19 @@ sudo systemctl daemon-reload
 sudo systemctl enable kernel-lab.service kernel-report.service code-server-lab.service
 sudo systemctl restart kernel-report.service code-server-lab.service
 
-# Health: model lists "coder", the report page answers, code-server answers.
-curl -fsS --max-time 10 http://localhost:8000/v1/models | grep -q '"id":"coder"'
-curl -fsS --max-time 10 "http://$BRIDGE_IP:$PROXY_PORT/v1/models" | grep -q '"id":"coder"'
+# Health: model lists "coder" (bounded wait), the report page answers,
+# code-server answers.
+wait_coder() {
+  local _
+  for _ in $(seq 1 90); do
+    if curl -fsS --max-time 5 "$1" | grep -q '"id":"coder"'; then return 0; fi
+    sleep 10
+  done
+  echo "Model server at $1 did not list 'coder' within 15 minutes; see: sudo docker logs vllm" >&2
+  return 1
+}
+wait_coder http://localhost:8000/v1/models
+wait_coder "http://$BRIDGE_IP:$PROXY_PORT/v1/models"
 for _ in $(seq 1 30); do
   if curl -fsS --max-time 5 http://localhost:3000/ | grep -q "Kernel Report" && \
      curl -fsS --max-time 5 -o /dev/null http://localhost:13337/healthz; then
