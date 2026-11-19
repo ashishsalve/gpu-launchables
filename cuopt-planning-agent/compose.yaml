@@ -199,7 +199,7 @@ services:
         12,30
       PLANNER_APP: |
         import base64, csv, hashlib, io, json, math, os, sys, tarfile, threading, time
-        import urllib.error, urllib.request
+        import urllib.error, urllib.parse, urllib.request
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
         E = os.environ
@@ -734,6 +734,16 @@ services:
             return h
 
 
+        def write_ok(h):
+            # Writes: Origin absent (curl, port-forward) or this page's own host; JSON body only.
+            o = h.get("Origin")
+            if o is not None:
+                host = urllib.parse.urlsplit(o).netloc.lower()
+                if not host or host not in ((h.get("Host") or "").lower(), (h.get("X-Forwarded-Host") or "").lower()):
+                    return False
+            return (h.get("Content-Type") or "").split(";")[0].strip().lower() == "application/json"
+
+
         class H(BaseHTTPRequestHandler):
             def log_message(self, fmt, *a):
                 pass
@@ -769,6 +779,8 @@ services:
 
             def do_POST(self):
                 p = self.path.split("?")[0]
+                if not write_ok(self.headers):
+                    return self.send(403, {"error": "cross-origin or non-JSON request refused"})
                 try:
                     n = int(self.headers.get("Content-Length") or 0)
                     if n > 200000:
@@ -812,6 +824,10 @@ services:
                                   "timelimit_primal": schedule_note("TimeLimit", True),
                                   "timelimit_empty": schedule_note("TimeLimit"),
                                   "infeasible": schedule_note("Infeasible")}))
+                return
+            if "--selftest-guard" in sys.argv:
+                # argv: --selftest-guard JSON list of header dicts; prints one verdict each
+                print(json.dumps([write_ok(h) for h in json.loads(sys.argv[sys.argv.index("--selftest-guard") + 1])]))
                 return
             if "--selftest-skills" in sys.argv:
                 # argv: --selftest-skills TARBALL SHA256 OUTDIR

@@ -568,6 +568,12 @@ services:
             if not re.fullmatch(r"[0-9a-f]{16}", doc or ""):
                 raise ValueError("bad document id")
             return doc
+        def write_ok(h, upload):
+            # Writes: Origin absent (curl, port-forward) or this page's own host; JSON, or for upload a type no plain form sends.
+            o, ct = h.get("Origin"), (h.get("Content-Type") or "").split(";")[0].strip().lower()
+            if o is not None and (not urlparse(o).netloc or urlparse(o).netloc.lower() not in ((h.get("Host") or "").lower(), (h.get("X-Forwarded-Host") or "").lower())):
+                return False
+            return ct not in ("text/plain", "multipart/form-data", "application/x-www-form-urlencoded") if upload else ct == "application/json"
         class Handler(BaseHTTPRequestHandler):
             def reply(self, code, body, ctype="application/json"):
                 body = body if isinstance(body, bytes) else json.dumps(body).encode()
@@ -604,6 +610,8 @@ services:
 
             def do_POST(self):
                 u = urlparse(self.path)
+                if not write_ok(self.headers, u.path == "/api/upload"):
+                    return self.reply(403, {"error": "cross-origin or non-JSON request refused"})
                 n = (self.headers.get("Content-Length") or "").strip()
                 if not re.fullmatch(r"[0-9]{1,12}", n) or int(n) > MAX_UPLOAD:
                     code, why = (411, "Content-Length is required") if not n else (413, "file is larger than 200 MB") if n.isdigit() else (400, "bad Content-Length")
@@ -668,6 +676,8 @@ services:
             return 1 if fails else 0
 
         if __name__ == "__main__":
+            if "--selftest-guard" in sys.argv:  # argv: JSON list of [headers, upload]; prints one verdict each
+                sys.exit(print(json.dumps([write_ok(h, up) for h, up in json.loads(sys.argv[sys.argv.index("--selftest-guard") + 1])])))
             if "--selftest" in sys.argv:
                 sys.exit(selftest())
             init_db()
@@ -716,7 +726,7 @@ services:
         const el = id => document.getElementById(id);
         let shown = "";
         async function api(path, body) {
-          const opt = body === undefined ? {} : {method: "POST", body: body instanceof Blob ? body : JSON.stringify(body)};
+          const opt = body === undefined ? {} : body instanceof Blob ? {method: "POST", body} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)};
           const r = await fetch(path, opt);
           const j = await r.json();
           if (!r.ok) throw new Error(j.error || String(r.status));
