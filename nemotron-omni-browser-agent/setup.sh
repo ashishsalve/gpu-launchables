@@ -13,8 +13,7 @@
 #   HF_TOKEN        - optional Hugging Face read token, no default. Stored only
 #                     in a mode 600 file and never printed.
 #
-# The script stops before installing anything while a pinned checksum or
-# image digest below is not a full sha256 value.
+# Unresolved pins below stop the script before it installs anything.
 set -euo pipefail
 
 MODEL="${MODEL:-nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8}"
@@ -143,8 +142,7 @@ umask 022
 
 # OpenShell sandbox policy: read-only system, writable /tmp and /workspace,
 # outbound HTTPS only to the listed hosts, only for the bundled Chromium.
-# tls: skip passes TLS through (the browser rejects the gateway's own
-# certificate); the host allowlist still applies to every connection.
+# tls: skip passes TLS through; the host allowlist still applies.
 {
   echo "version: 1"
   echo "filesystem_policy:"
@@ -302,6 +300,9 @@ sb_create() { $OPENSHELL_BIN sandbox create --name browser-agent --from $SANDBOX
 ERRS=$STATE/sandbox-errors
 sb_list="\$($OPENSHELL_BIN sandbox list)"
 phase="\$(awk '\$1 == "browser-agent" { print \$NF }' <<<"\$sb_list")"
+B=\$(cat /proc/sys/kernel/random/boot_id)
+[ -z "\$phase" ] || [ ! -s $STATE/boot ] || [ "\$B" = "\$(<$STATE/boot)" ] || { echo "New boot: re-creating sandbox browser-agent (its /tmp keeps a stale X lock)"; $OPENSHELL_BIN sandbox delete browser-agent; phase=; }
+echo "\$B" > $STATE/boot
 n=0
 if [ "\$phase" = Error ]; then
   n="\$(cat \$ERRS 2>/dev/null || true)"
