@@ -1,5 +1,9 @@
 # NemoClaw Private Agent on Local Nemotron
 
+[![Launch on Brev](https://brev-assets.s3.us-west-1.amazonaws.com/nv-lb-dark.svg)](https://brev.nvidia.com/launchable/deploy?launchableID=env-3MK68pYUXCux61sliWiZiwndcQ0)
+
+Launchable ID: env-3MK68pYUXCux61sliWiZiwndcQ0
+
 Run a private agent with [NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw) on one GPU. The agent runs inside an [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandbox and uses one of three open-source agent harnesses: OpenClaw, Hermes Agent or LangChain Deep Agents Code. Its model, NVIDIA Nemotron 3.5 Lightning, is served by [vLLM](https://github.com/vllm-project/vllm) on the same GPU, so no external model API or API key is needed.
 
 1x L40S 48GB, >= 46 GB VRAM | 200 GiB disk | ~$2.23/hr (console 2026-11-18) | ~30 min to ready | Stop to pause, Delete when done
