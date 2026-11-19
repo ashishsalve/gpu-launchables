@@ -55,9 +55,7 @@ Everything lives in `/home/ubuntu/workspace/asl`: model cache, configs, runs and
 
 ## Stop and delete
 
-Stop pauses the instance; the lab restarts on Start without re-entering settings. Disk storage is billed while stopped. Delete removes the instance and all data.
-
-If the lab does not come back after Start, run: sudo systemctl restart asl.service
+Stop pauses the instance. Disk storage is billed while stopped. Delete removes the instance and all data.
 
 ## Troubleshooting
 
