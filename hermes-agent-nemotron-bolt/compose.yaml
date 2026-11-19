@@ -1,0 +1,209 @@
+# Hermes Agent (Nous Research) on NVIDIA Nemotron 3.5 Bolt, served by
+# llama.cpp on one GPU (Docker Compose).
+#
+# Launch parameters:
+#   MODEL - which Nemotron 3.5 Bolt GGUF llama.cpp serves:
+#           e4b (default) or
+#           74b (the model server starts only on a GPU that reports at least
+#           40000 MiB of memory; see docs/bolt-74b-on-l40s.md).
+#   HERMES_DASHBOARD_BASIC_AUTH_PASSWORD - password for the Hermes dashboard
+#           (user "hermes"), 12 or more characters, no default.
+# Parameters are read by the first `docker compose up` and kept in each
+# container's configuration, so stop and start need no re-entry. The password
+# reaches only the hermes service environment and a file under
+# /home/ubuntu/workspace/hermes-bolt/hermes/.launchable-auth (mode 600); it is
+# never printed. That stored file gates the dashboard: if it is missing or
+# empty, hermes logs why and waits (reported unhealthy) instead of starting
+# without a password.
+#
+# Pinned images:
+#   ghcr.io/ggml-org/llama.cpp:server-cuda-b12464 (+ digest) - llama.cpp
+#     release b12464, CUDA server build.
+#   nousresearch/hermes-agent:v0.23.2 (+ digest) - Hermes Agent v0.23.2.
+# Pinned model files (Hugging Face, fixed revisions, downloaded on first start
+# and checked by size, and by sha256 where a hash is set below):
+#   nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB @ 1db54d5b12533ff1bcaa8e42cf4c667988a1f1be
+#   nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-GGUF @ e0fecb69cb3e5e4c5e8a056fa2aec98c78e91246
+#
+# Network: only the Hermes dashboard (port 9119, password protected) is
+# reached through the Brev Secure Link. The llama.cpp API, with its /metrics
+# token counters (--metrics), is published on the instance loopback only
+# (127.0.0.1:8080); Hermes reaches it on the compose network as
+# http://llama:8080/v1. No Docker socket is mounted.
+#
+# Persistence: models, Hermes settings, skills and sessions are written under
+# /home/ubuntu/workspace/hermes-bolt on the host, inside the Brev workspace
+# directory.
+
+name: hermes-nemotron-bolt
+
+services:
+  llama:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b12464@sha256:ae96e52f8b2106ea82bad786ee2d08bb9b0a8c93403df9c27ae1bf065a118089
+    restart: unless-stopped
+    environment:
+      MODEL: "${MODEL:-e4b}"
+    volumes:
+      - /home/ubuntu/workspace/hermes-bolt/models:/models
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        mmproj=""
+        mmproj_size=0
+        mmproj_sha=""
+        need_mib=0
+        # sha: expected sha256 of the file; an empty value skips the hash check
+        # (the byte-size check still runs).
+        case "$$MODEL" in
+          e4b)
+            repo=nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB
+            rev=1db54d5b12533ff1bcaa8e42cf4c667988a1f1be
+            file=Nemotron-3.5-Bolt-E4B-Q4_K_M.gguf
+            size=6180446208
+            sha=c8af2b8aea10a690a1d9491db744a9446660173cb38fc489612b556615a69612
+            ;;
+          74b)
+            repo=nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-GGUF
+            rev=e0fecb69cb3e5e4c5e8a056fa2aec98c78e91246
+            file=NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB.gguf
+            size=22018326528
+            sha=""
+            mmproj=mmproj-NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB.gguf
+            mmproj_size=1733692736
+            need_mib=40000
+            ;;
+          *)
+            echo "llama: unknown MODEL '$$MODEL' (expected e4b or 74b)" >&2
+            exit 1
+            ;;
+        esac
+        if [ "$$need_mib" -gt 0 ]; then
+          total=$$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -n 1)
+          if [ "$${total:-0}" -lt "$$need_mib" ]; then
+            echo "llama: MODEL=74b starts only on a GPU that reports at least $$need_mib MiB of memory; this GPU reports $${total:-unknown} MiB. Deploy again with MODEL=e4b, or with MODEL=74b on a larger GPU." >&2
+            exec sleep infinity
+          fi
+        fi
+        fetch() {
+          dest="/models/$$1"
+          have=$$(stat -c %s "$$dest" 2>/dev/null || echo 0)
+          if [ "$$have" = "$$2" ]; then
+            return 0
+          fi
+          echo "llama: downloading $$1"
+          curl -fsSL --retry 5 --retry-delay 10 -C - -o "$$dest.part" "https://huggingface.co/$$repo/resolve/$$rev/$$1"
+          have=$$(stat -c %s "$$dest.part")
+          if [ "$$have" != "$$2" ]; then
+            echo "llama: $$1 has $$have bytes, expected $$2" >&2
+            exit 1
+          fi
+          # A failed hash check stops here and waits instead of exiting, so the
+          # restart policy does not download the multi-GB file again in a loop.
+          if [ -n "$$3" ]; then
+            if ! command -v sha256sum >/dev/null 2>&1; then
+              echo "llama: sha256sum is not available, so $$1 cannot be verified; removing the download. The model server will not start." >&2
+              rm -f "$$dest.part"
+              exec sleep infinity
+            fi
+            if ! printf '%s  %s\n' "$$3" "$$dest.part" | sha256sum -c --status; then
+              echo "llama: $$1 does not match its expected sha256; removing the download. The model server will not start." >&2
+              rm -f "$$dest.part"
+              exec sleep infinity
+            fi
+          fi
+          mv "$$dest.part" "$$dest"
+        }
+        fetch "$$file" "$$size" "$$sha"
+        # --metrics serves Prometheus token counters at /metrics on port 8080,
+        # which is published on the instance loopback only.
+        set -- --model "/models/$$file" --alias nemotron-bolt --host 0.0.0.0 --port 8080 --n-gpu-layers 999 --ctx-size 65536 --parallel 1 --flash-attn on --jinja --reasoning-format deepseek --temp 1.0 --top-p 0.95 --metrics
+        if [ -n "$$mmproj" ]; then
+          fetch "$$mmproj" "$$mmproj_size" "$$mmproj_sha"
+          set -- "$$@" --mmproj "/models/$$mmproj"
+        fi
+        exec /app/llama-server "$$@"
+    ports:
+      # Instance loopback only: reach the API with `brev port-forward`.
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1800s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  hermes:
+    image: nousresearch/hermes-agent:v0.23.2@sha256:d6746a084e9341baada483e3d6210444d3c1aeb7c130f0915150065fb2851459
+    restart: unless-stopped
+    depends_on:
+      llama:
+        # Start the dashboard at once; the agent answers once the model is loaded.
+        condition: service_started
+    shm_size: 1g
+    environment:
+      HERMES_DASHBOARD: "1"
+      HERMES_DASHBOARD_HOST: "0.0.0.0"
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: "hermes"
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:-}"
+      HERMES_UID: "1000"
+      HERMES_GID: "1000"
+    volumes:
+      - /home/ubuntu/workspace/hermes-bolt/hermes:/opt/data
+    # Writes the dashboard password to a 0600 file (so a restart without the
+    # parameter still has it) and a first-run config pointing Hermes at the
+    # local model, then runs the image's own entrypoint unchanged.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        umask 077
+        # /tmp/launchable-refused marks a refused start for the healthcheck.
+        rm -f /tmp/launchable-refused
+        auth=/opt/data/.launchable-auth
+        mkdir -p "$$auth"
+        if [ -n "$${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:-}" ]; then
+          printf '%s' "$$HERMES_DASHBOARD_BASIC_AUTH_PASSWORD" > "$$auth/password"
+        fi
+        # Fail closed: the stored password file, not the launch parameter,
+        # gates the dashboard, so a restart without the parameter still works.
+        # A refusal waits instead of exiting, so the restart policy does not
+        # loop; the container then reports unhealthy.
+        if [ ! -s "$$auth/password" ]; then
+          echo "hermes: no dashboard password is stored in $$auth/password; the dashboard does not start without one. Deploy again with HERMES_DASHBOARD_BASIC_AUTH_PASSWORD set." >&2
+          : > /tmp/launchable-refused
+          exec sleep infinity
+        fi
+        HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=$$(cat "$$auth/password")
+        export HERMES_DASHBOARD_BASIC_AUTH_PASSWORD
+        chmod 600 "$$auth/password"
+        if [ "$${#HERMES_DASHBOARD_BASIC_AUTH_PASSWORD}" -lt 12 ]; then
+          echo "hermes: the dashboard password must have at least 12 characters; the dashboard does not start. Deploy again with a longer HERMES_DASHBOARD_BASIC_AUTH_PASSWORD." >&2
+          : > /tmp/launchable-refused
+          exec sleep infinity
+        fi
+        if [ ! -f /opt/data/config.yaml ]; then
+          umask 022
+          printf '%s\n' 'model:' '  provider: custom' '  default: nemotron-bolt' '  base_url: http://llama:8080/v1' '  api_key: none' 'terminal:' '  backend: local' > /opt/data/config.yaml
+          chown "$$HERMES_UID:$$HERMES_GID" /opt/data/config.yaml
+        fi
+        exec /opt/hermes/docker/entrypoint-dispatch.sh gateway run
+    healthcheck:
+      # Unhealthy only when the start was refused (no or short password).
+      test: ["CMD-SHELL", "test ! -e /tmp/launchable-refused"]
+      interval: 30s
+      timeout: 5s
+      retries: 1
+    ports:
+      # Served to deployers through the Brev Secure Link "open-hermes";
+      # the dashboard asks for user "hermes" and the launch password.
+      - "9119:9119"
