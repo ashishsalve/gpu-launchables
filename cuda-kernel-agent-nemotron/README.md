@@ -72,7 +72,7 @@ The agent runs code it writes. It is confined to the sandbox filesystem and netw
 
 Current versions: vLLM v0.27.1; Nemotron 3.5 Lightning 30B-A3B NVFP4 revision bee7596; CUDA 13.5.0 devel (Ubuntu 24.04); Nsight Compute and Nsight Systems 13.5.0; PyTorch 2.15.0 (cu132); Triton 3.9.0; cuTile 1.8.1; CuPy 14.2.0; code-server 4.145.2; NVIDIA skills e8f43c1.
 
-Last smoke: 2026-11-19, fresh deploy on AWS with 1x L40S: setup completed, the agent answered from the local model inside the GPU sandbox, and both links required their passwords.
+Last smoke: not yet run.
 
 ## Credits and licences
 
